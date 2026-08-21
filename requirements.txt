@@ -1,0 +1,8 @@
+numpy
+scipy
+torch
+river>=0.21
+uproot
+awkward
+matplotlib
+pytest
