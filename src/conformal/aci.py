@@ -50,6 +50,7 @@ class AdaptiveConformalThreshold:
     alpha_min: float = 1e-4
     alpha_max: float = 0.5
     delayed_gamma: Optional[float] = None  # defaults to gamma if None
+    adapt_calibration_buffer: bool = True
 
     _alpha_t: float = field(init=False)
     _calib_scores: Deque[float] = field(init=False)
@@ -65,8 +66,25 @@ class AdaptiveConformalThreshold:
     def from_burn_in(
         cls, burn_in_scores: np.ndarray, alpha_target: float = 0.01,
         gamma: float = 0.01, calibration_window: int = 2000,
+        adapt_calibration_buffer: bool = True,
     ) -> "AdaptiveConformalThreshold":
-        obj = cls(alpha_target=alpha_target, gamma=gamma, calibration_window=calibration_window)
+        """
+        :param adapt_calibration_buffer: if True (default), live Zero-Bias
+            scores keep sliding into the calibration buffer via update()/
+            update_delayed() -- see current_threshold()'s docstring for
+            why. If False, the buffer is frozen at burn-in: update() and
+            update_delayed() still adapt alpha_t from miscoverage feedback,
+            but the quantile the threshold is drawn from never moves past
+            what burn-in saw. This is the ablation control for isolating
+            whether the sliding buffer (vs. the alpha_t adaptation) drives
+            any observed recall/FPR gap against a naive fixed threshold --
+            see evaluation.py's detection_efficiency_vs_fixed_threshold and
+            SCOPE.md's recall-gap ablation item.
+        """
+        obj = cls(
+            alpha_target=alpha_target, gamma=gamma, calibration_window=calibration_window,
+            adapt_calibration_buffer=adapt_calibration_buffer,
+        )
         for s in np.asarray(burn_in_scores, dtype=np.float64):
             obj._calib_scores.append(float(s))
         return obj
@@ -93,14 +111,16 @@ class AdaptiveConformalThreshold:
     def update(self, zero_bias_score: float) -> dict:
         """Online update from a fresh Zero-Bias control-stream score (known
         background by construction of the Zero-Bias trigger path). Call
-        this on every Zero-Bias event; it both adapts alpha_t and pushes
-        the score onto the sliding calibration buffer.
+        this on every Zero-Bias event; it always adapts alpha_t, and (if
+        adapt_calibration_buffer=True, the default) also pushes the score
+        onto the sliding calibration buffer.
         """
         threshold = self.current_threshold()
         err = 1.0 if zero_bias_score > threshold else 0.0
         self._alpha_t += self.gamma * (self.alpha_target - err)
         self._alpha_t = self._clip(self._alpha_t)
-        self._calib_scores.append(float(zero_bias_score))
+        if self.adapt_calibration_buffer:
+            self._calib_scores.append(float(zero_bias_score))
         record = {"threshold": threshold, "miscoverage": bool(err), "alpha_t": self._alpha_t}
         self._history.append(record)
         return record

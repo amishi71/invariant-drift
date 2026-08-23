@@ -47,3 +47,27 @@ class TestACI:
         threshold_before = aci.current_threshold()
         aci.update(threshold_before + 10.0)  # force a miscoverage
         assert aci.alpha_t < alpha_before
+
+    def test_frozen_buffer_does_not_grow(self):
+        """adapt_calibration_buffer=False: alpha_t still adapts, but the
+        calibration buffer used for the quantile stays exactly at its
+        burn-in size -- the ablation control for
+        scripts/aci_recall_gap_ablation.py."""
+        rng = np.random.RandomState(4)
+        burn_in = rng.normal(0, 1, 300)
+        aci = AdaptiveConformalThreshold.from_burn_in(
+            burn_in, alpha_target=0.05, gamma=0.1, adapt_calibration_buffer=False,
+        )
+        alpha_before = aci.alpha_t
+        for x in rng.normal(0, 1, 200):
+            aci.update(float(x))
+        assert len(aci._calib_scores) == 300  # unchanged from burn-in
+        assert aci.alpha_t != alpha_before  # alpha_t still adapted
+
+    def test_sliding_buffer_grows_by_default(self):
+        rng = np.random.RandomState(5)
+        burn_in = rng.normal(0, 1, 300)
+        aci = AdaptiveConformalThreshold.from_burn_in(burn_in, alpha_target=0.05, gamma=0.1)
+        for x in rng.normal(0, 1, 200):
+            aci.update(float(x))
+        assert len(aci._calib_scores) == 500  # grew by the 200 live updates
