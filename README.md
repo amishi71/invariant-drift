@@ -46,7 +46,7 @@ src/
     abrupt.py              masked readout channels / multiplicity step
   evaluation.py           ARL, latency, false-alarm rate, coverage, online FDR
 main.py                   end-to-end orchestration; `python main.py --help`
-tests/                    pytest suite, 48 tests (see "Known issues" -- several
+tests/                    pytest suite, 58 tests (see "Known issues" -- several
                            are regression tests for real bugs found below)
 ```
 
