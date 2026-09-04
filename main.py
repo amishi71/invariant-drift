@@ -68,7 +68,7 @@ def _collect(stream, n):
 
 
 def build_calibration(n_burn_in: int, seed: int, vae_epochs: int, verbose: bool):
-    print(f"[1/6] Burn-in: {n_burn_in} stable events, training proxy VAE "
+    print(f"[1/7] Burn-in: {n_burn_in} stable events, training proxy VAE "
           f"({vae_epochs} epochs)...")
     feats, pileup, n_jet, lumi, _ = _collect(
         synthetic_object_stream(n_burn_in, seed=seed), n_burn_in,
@@ -120,7 +120,7 @@ def _cache_residual_trials(model, scaler, calib, stream_fn, n_events, n_trials, 
 
 
 def run_component_1(model, scaler, calib, burn_in_residuals, n_events, n_trials, seed):
-    print(f"\n[2/6] Component 1: {len(DETECTOR_SPECS)} detectors x "
+    print(f"\n[2/7] Component 1: {len(DETECTOR_SPECS)} detectors x "
           f"(ARL/false-alarm + 4 drift scenarios)...")
     results = {name: {} for name in DETECTOR_SPECS}
     n_lat_trials = max(3, n_trials // 3)
@@ -200,7 +200,7 @@ def run_component_1(model, scaler, calib, burn_in_residuals, n_events, n_trials,
 
 
 def run_component_2(model, scaler, calib, burn_in_scores, n_events, seed):
-    print(f"\n[3/6] Component 2: ACI + online FDR (LORD, SAFFRON) on the "
+    print(f"\n[3/7] Component 2: ACI + online FDR (LORD, SAFFRON) on the "
           f"misspecified-gradual scenario...")
     # Scenario choice matters here, and it's worth being explicit about why:
     # ACI's decide() is a ONE-SIDED gate (flag if score > threshold), which
@@ -305,8 +305,26 @@ def run_space_case_study(model, scaler, calib, burn_in_residuals, n_events, n_tr
     the reframe. Deliberately restricted to the 2 primary detectors, not
     all 5 -- this is a generalization check on the paper's core claim, not
     a second full detector comparison.
+
+    ALL DATA HERE IS SYNTHETIC (radiation_damage_stream is a synthetic
+    generator, not real detector data -- see stream_loader.py's module
+    docstring and README's "What's stubbed" section). No real-data
+    validation of this specific scenario exists yet; that is Milestone E
+    work (post-short-paper), not this function's job.
+
+    Multi-seed validation (5 independently-trained VAEs, 15 trials each,
+    seeds 6000-6014 per VAE, this project's real evaluation.
+    run_detector_on_residuals semantics): CUSUM missed 0/75 trials across
+    every seed (miss_rate=0.000, std=0.000) -- fully reliable in this
+    synthetic setting. BOCPD's miss rate varies substantially by VAE seed
+    (0.267 to 0.867; mean=0.587, std=0.208) and, when it does detect, tends
+    to do so either very early or not at all -- no stable middle-ground
+    latency. Report BOCPD's number as a mean+/-std range, not a single
+    figure from one run; the direction of the claim (CUSUM reliable,
+    BOCPD not) is solid, the specific miss-rate number is not a fixed
+    constant.
     """
-    print(f"\n[4/6] Space-detector case study: permanent monotonic gain "
+    print(f"\n[4/7] Space-detector case study: permanent monotonic gain "
           f"drift (radiation-damage analog) on CUSUM + BOCPD...")
     primary_specs = {k: DETECTOR_SPECS[k] for k in ("CUSUM", "BOCPD")}
     cache = _cache_residual_trials(
@@ -333,9 +351,92 @@ def run_space_case_study(model, scaler, calib, burn_in_residuals, n_events, n_tr
               f"latency_mean={results[name]['latency_mean']}")
     return results
 
+def run_masked_channel_onesided_case_study(model, scaler, calib, burn_in_residuals,
+                                            n_events, n_trials, seed):
+    """One-sided CUSUM variant for the masked-channel scenario, evaluated
+    SEPARATELY from the main 5-detector comparison table (DETECTOR_SPECS
+    in run_component_1), for the same reason run_space_case_study restricts
+    to 2 detectors: this is a targeted methodological result, not a fair
+    general-purpose comparison entry.
+
+    Motivation: the default two-sided CUSUM (k=0.5, h=8.0, tuned for the
+    project's other scenarios) misses the masked-channel drop 73-93% of
+    the time across seeds tested (see README's "Known issues"). Diagnosis
+    found the residual shift at moderate drop_fraction (0.15-0.6) is real
+    but small (~0.1-0.2 sigma) -- an order of magnitude below what k=0.5
+    is tuned to detect efficiently. A joint (k, h) grid search found no
+    two-sided setting that both catches this shift and preserves a usable
+    ARL0.
+
+    Attempted fix: a ONE-SIDED CUSUM (k=0.1, h=16.0, negated transform)
+    monitoring only the downward branch, informed by the masked-channel
+    failure mode's known a-priori direction.
+
+    IMPORTANT CAVEAT, found during validation (do not remove this note
+    without re-deriving it): an isolated diagnostic script that let the
+    detector reset and kept watching past any pre-changepoint false alarm
+    showed near-perfect detection (miss_rate 0.0-0.075). But this
+    project's shared evaluation.run_detector_on_residuals() stops at the
+    FIRST alarm anywhere in the stream and counts a pre-changepoint false
+    alarm as a full miss of the real, later shift. Because the one-sided
+    config is far more sensitive (ARL0 ~3500 over a ~2500-event
+    pre-changepoint window implies a real chance of alarming before the
+    changepoint is ever reached), this evaluation semantics penalizes it
+    more than the less-sensitive default. Result: the one-sided detector
+    still outperforms the default at every seed tested, but the margin is
+    smaller than initially measured, and is NOT the "near-total detection"
+    number from the isolated diagnostic. Report the numbers this function
+    actually prints, evaluated consistently with every other detector in
+    this project -- not the isolated-script numbers.
+
+    TODO before final submission: run across >=5 seeds (currently only
+    seed=0 and seed=1 checked) to report a stable mean +/- std for both
+    configurations, rather than two data points.
+    """
+    print(f"\n[5/7] Masked-channel one-sided CUSUM case study "
+          f"(see 'Known issues' for why the default detector misses this)...")
+    onesided_cusum = CUSUMDetector(
+        burn_in_residuals, k=0.1, h=16.0, two_sided=False,
+        transform=lambda x: -np.asarray(x),
+    )
+    onesided_factory = lambda ref: CUSUMDetector(
+        ref, k=0.1, h=16.0, two_sided=False, transform=lambda x: -np.asarray(x),
+    )
+    default_factory = DETECTOR_SPECS["CUSUM"]
+
+    results = {}
+    for label, factory in (("CUSUM (default, two-sided)", default_factory),
+                           ("CUSUM (one-sided, masked-channel-tuned)", onesided_factory)):
+        # drop_fraction=0.4 -- the value this one-sided config was tuned
+        # and held-out-validated against (see docstring above). Do NOT
+        # inherit the main scenario cache's default (0.15) here silently;
+        # this case study is specifically about the tuned operating point.
+        cache = _cache_residual_trials(
+            model, scaler, calib,
+            lambda t: masked_channel_stream(n_events, changepoint_event=n_events // 2,
+                                             drop_fraction=0.4, seed=4000 + seed + t),
+            n_events, n_trials, seed,
+        )
+        latencies, n_missed = [], 0
+        for residuals, onset in cache:
+            detector = factory(burn_in_residuals)
+            r = evaluation.run_detector_on_residuals(detector, residuals, true_onset_event=onset)
+            if r.detected and r.latency is not None:
+                latencies.append(r.latency)
+            else:
+                n_missed += 1
+        results[label] = {
+            "n_trials": len(cache), "n_missed": n_missed, "miss_rate": n_missed / len(cache),
+            "latency_mean": float(np.mean(latencies)) if latencies else None,
+            "latency_median": float(np.median(latencies)) if latencies else None,
+        }
+        print(f"      {label:42s} miss_rate={results[label]['miss_rate']:.2f}  "
+              f"latency_mean={results[label]['latency_mean']}")
+    return results
+
 
 def run_throughput_benchmark(burn_in_residuals):
-    print(f"\n[5/6] Throughput/memory benchmark (all 5 detectors, "
+    print(f"\n[6/7] Throughput/memory benchmark (all 5 detectors, "
           f"see src/benchmark.py for the embedded-constraint framing)...")
     results = benchmark_mod.benchmark_all(DETECTOR_SPECS, burn_in_residuals, n_events=5000)
     print(benchmark_mod.format_results(results))
@@ -380,17 +481,22 @@ def main():
     space_case_study = run_space_case_study(
         model, scaler, calib, burn_in_residuals, args.n_events, max(3, args.n_trials // 2), args.seed,
     )
+    masked_channel_onesided = run_masked_channel_onesided_case_study(
+        model, scaler, calib, burn_in_residuals, args.n_events, max(3, args.n_trials // 2), args.seed,
+    )
     throughput = run_throughput_benchmark(burn_in_residuals)
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     with open(args.out, "w") as f:
         json.dump({
             "component_1": comp1, "component_2": comp2,
-            "space_case_study": space_case_study, "throughput": throughput,
+            "space_case_study": space_case_study,
+            "masked_channel_onesided": masked_channel_onesided,
+            "throughput": throughput,
         }, f, indent=2, default=str)
 
     elapsed = time.time() - t0
-    print(f"\n[6/6] Done in {elapsed:.1f}s. Results written to {args.out}")
+    print(f"\n[7/7] Done in {elapsed:.1f}s. Results written to {args.out}")
 
 
 if __name__ == "__main__":

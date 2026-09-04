@@ -7,3 +7,6 @@ venv/
 results/*.json
 !results/.gitkeep
 data/real/
+data/real_multi/
+data/real_multi/
+data/real_cache/
