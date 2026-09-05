@@ -8,5 +8,6 @@ results/*.json
 !results/.gitkeep
 data/real/
 data/real_multi/
-data/real_multi/
 data/real_cache/
+!results/real_data_sweep_aggregated.json
+results/real_seeds/
