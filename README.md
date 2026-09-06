@@ -173,6 +173,29 @@ the default cache source (`data/real_cache/jetht_features.npz`); the
 original uproot-derived cache is kept for reference
 (`data/real_cache/jetht_features_uproot.npz`).
 
+### Data provenance
+
+The 5 real CMS Open Data files used throughout this project (record
+30558, `/JetHT/Run2016H-UL2016_MiniAODv2_NanoAODv9-v1/NANOAOD`, DOI
+`10.7483/OPENDATA.CMS.8ALJ.MQSO`) were independently verified, not just
+downloaded and trusted:
+
+- **File integrity**: every local file's size and adler32 checksum match
+  CERN's official record metadata exactly (`scripts/verify_real_data_provenance.py`).
+- **Content authenticity**: the record declares Run2016H, run numbers
+  281613-284044. The actual `run` branch values found inside the files
+  (283876-284044) fall inside that declared range -- confirming this is
+  genuine CMS collision data, not synthetic or misattributed. EDM
+  provenance objects (`edm::ProcessHistory`, `edm::ProcessConfiguration`,
+  etc., visible as ROOT warnings when reading the files) further confirm
+  these are real CMSSW-produced NanoAOD files, not a placeholder format.
+
+Reproduce with:
+```bash
+cernopendata-client get-metadata --recid 30558 > /tmp/record_30558.json
+python3 scripts/verify_real_data_provenance.py
+```
+
 Reproduce the full real-data validation with:
 ```bash
 for s in 0 1 2 3 4 5; do
