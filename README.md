@@ -14,8 +14,6 @@ has silently gone stale, evaluated on CMS/LHC Open Data:
    validation, plus **online false discovery rate control** (LORD,
    SAFFRON) over windowed batches of the resulting decisions.
 
-Full abstract: [`docs/ABSTRACT.md`](docs/ABSTRACT.md). Advisor-facing scope
-note (why AXOL1TL-proxy, not CICADA): [`docs/ADVISOR_NOTES.md`](docs/ADVISOR_NOTES.md).
 
 Reuses `CUSUMDetector`/`PageHinkleyDetector`'s core logic (frozen-reference
 discipline) and the XRootD streaming/retry infrastructure from
