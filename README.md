@@ -47,12 +47,18 @@ src/
   evaluation.py            ARL, latency, false-alarm rate, coverage, online FDR
 main.py                    end-to-end orchestration on synthetic data; `python main.py --help`
 scripts/
-  real_data_touchpoint.py       original narrow real-data touchpoint (regression only)
-  real_data_sweep.py            full detection sweeps on real+injected CMS data
-  aggregate_real_sweep.py       aggregates multi-seed real_data_sweep.py output
-  real_data_retune.py           CUSUM (k,h) retune grid against real background
-  build_real_cache_pyroot.py    PyROOT/RDataFrame-native real-feature extraction
-  validate_pyroot_cache.py      validates the PyROOT cache against the uproot one
+  real_data_touchpoint.py            original narrow real-data touchpoint (regression only)
+  real_data_sweep.py                 full detection sweeps on real+injected CMS data
+  aggregate_real_sweep.py            aggregates multi-seed real_data_sweep.py output
+  real_data_retune.py                CUSUM (k,h) retune grid against real background
+  build_real_cache_pyroot.py         PyROOT/RDataFrame-native real-feature extraction
+  validate_pyroot_cache.py           validates the PyROOT cache against the uproot one
+  verify_real_data_provenance.py     checksum + run-number provenance check against the
+                                      official CERN Open Data record
+  diagnose_residual_distribution.py  measures autocorrelation/kurtosis of real vs.
+                                      synthetic burn-in residuals (FA-rate gap diagnosis)
+  aci_recall_gap_ablation.py         three-way ablation isolating the ACI adaptive-
+                                      threshold recall gap to alpha_t, not the buffer
 tests/                      pytest suite, 58 tests (see "Known issues" -- several
                             are regression tests for real bugs found below)
 ```
@@ -125,12 +131,11 @@ reliable than BOCPD on this drift type in both substrates (10.0% vs.
 **Does not transfer as-is:** the false-alarm rate under the default
 (k=0.5, h=8.0) calibration is substantially higher on real background
 (66.7% +/- 19.7%) than on synthetic data at the same detector settings
-(~17-33% in the synthetic Component-1 sweep). Real-world residual noise
--- likely more autocorrelated or heavier-tailed than the synthetic
-generator's simplifying assumptions -- appears to trigger the default
-threshold far more often.
+(~17-33% in the synthetic Component-1 sweep). See "CUSUM (k,h) retune"
+below for how much of this gap can be closed, and "Root-cause diagnosis"
+for why the remainder resists closure.
 
-### CUSUM (k,h) retune attempt: no free lunch
+### CUSUM (k,h) retune: partial improvement, root cause identified
 
 Given the FA-rate gap above, `scripts/real_data_retune.py` grid-searched
 CUSUM's `h` (holding `k=0.5`) against real background, reusing cached
@@ -144,15 +149,47 @@ across 4 seeds (0-3):
 
 `h=10` cuts the false-alarm rate roughly 6x, but at a real cost: masked-
 channel miss-rate (already the harder scenario) gets worse, and
-radiation-damage -- previously near-perfect -- degrades meaningfully. No
-`h` value tested closes the FA-rate gap without materially damaging
-detection sensitivity (h>=12 drives FA-rate to 0 but collapses detection
-almost entirely -- see `results/real_data_retune.json`). This points at
-a genuine distributional mismatch between real and synthetic residual
-noise, not a simple mistuning: a single-parameter CUSUM retune cannot
-paper over it. Future work should either jointly retune `(k, h)`, or
-lengthen the real burn-in window past 3000 events to test whether FA-rate
-stabilizes with more calibration data.
+radiation-damage -- previously near-perfect -- degrades meaningfully.
+h>=12 drives FA-rate to 0 but collapses detection almost entirely (see
+`results/real_data_retune.json`).
+
+A **joint grid over `(k, h)`** finds a meaningfully better trade-off than
+tuning `h` alone. At `k=0.2, h=24` (confirmed across 4 seeds):
+
+| Config               | FA_rate         | masked-channel miss_rate | radiation-damage miss_rate |
+| -------------------- | --------------- | ------------------------ | -------------------------- |
+| k=0.5, h=8 (default) | 53.8% +/- 11.4% | 77.5% +/- 8.3%           | 7.5% +/- 4.3%              |
+| k=0.2, h=24          | 33.8% +/- 7.4%  | 82.5% +/- 13.0%          | **0.0% +/- 0.0%**          |
+
+False-alarm rate drops meaningfully (54%->34%) and radiation-damage
+detection actually *improves* to perfectly reliable, at the cost of a
+modest, noisy increase in masked-channel miss-rate. This is a real,
+non-trivial improvement -- but still not full closure of the gap.
+
+**Root-cause diagnosis.** `scripts/diagnose_residual_distribution.py`
+tests two specific hypotheses for why the gap resists closure: that real
+background residuals are more autocorrelated, or more heavy-tailed, than
+the synthetic generator produces (either would violate CUSUM's implicit
+i.i.d.-Gaussian assumption and inflate false alarms independent of
+threshold tuning). Measured directly on burn-in residuals:
+
+| Metric                | Synthetic | Real   |
+| --------------------- | --------- | ------ |
+| Lag-1 autocorrelation | 0.005     | -0.018 |
+| Excess kurtosis       | 0.072     | 0.452  |
+
+Autocorrelation is negligible and comparable in both substrates (both
+consistent with white noise) -- **ruled out** as the mechanism. Excess
+kurtosis differs substantially: real background has **roughly 6x** the
+tail-weight of the synthetic generator's near-Gaussian residuals. This
+directly implicates tail weight, not serial correlation, as the driver,
+and explains why `(k, h)` retuning cannot fully close the gap: it
+adjusts threshold location and sensitivity, not distributional shape. A
+more targeted fix -- calibrating the threshold against the empirical,
+heavy-tailed real residual distribution directly, or a robust/quantile-
+based reference distribution in place of CUSUM's standard formulation --
+is a well-posed, testable next step, identified here but not yet
+implemented.
 
 ### Extraction backend: uproot vs. PyROOT
 
@@ -202,7 +239,13 @@ for s in 0 1 2 3 4 5; do
   python3 scripts/real_data_sweep.py --seed $s --out results/real_seeds/seed${s}.json
 done
 python3 scripts/aggregate_real_sweep.py results/real_seeds/*.json
-python3 scripts/real_data_retune.py --h-values 8,10,12,16,20,24,32
+
+# (k,h) retune sweep and root-cause diagnosis
+python3 scripts/real_data_retune.py --k-values 0.2,0.3,0.4,0.5 --h-values 6,8,10,12,16,20,24
+python3 scripts/diagnose_residual_distribution.py
+
+# ACI recall-gap ablation
+python3 scripts/aci_recall_gap_ablation.py
 
 # PyROOT extraction (run in a SEPARATE venv with ROOT installed -- see
 # scripts/build_real_cache_pyroot.py's module docstring for setup, since
@@ -284,19 +327,21 @@ not hypothetical concerns:
   redundant scenario. Both components existing independently isn't
   incidental -- this is a concrete case where the residual-based detector
   catches something the threshold-based one structurally can't.
-- **Adaptive threshold's recall vs. the fixed baseline (main.py's
-  `detection_efficiency_vs_fixed_threshold` output).** In the default run,
-  the adaptive ACI threshold shows *lower* recall than the naive frozen
-  threshold on the misspecified-gradual scenario, despite both being
-  well-calibrated on background (ACI's empirical miscoverage tracks its
-  0.02 target closely). Plausible explanation, not yet fully isolated: ACI's
-  sliding calibration buffer absorbs some of the pre-onset portion of the
-  live test stream (which has its own sampling variability relative to the
-  original burn-in set) into its quantile estimate, which can push its
-  threshold slightly higher than the frozen burn-in-only quantile. Worth
-  a dedicated ablation (fix the buffer to burn-in only vs. let it slide)
-  before drawing conclusions for the writeup -- flagged here rather than
-  quietly resolved by picking whichever run looked better.
+- **Adaptive threshold's recall vs. the fixed baseline -- resolved.**
+  (main.py's `detection_efficiency_vs_fixed_threshold` output). In the
+  default run, the adaptive ACI threshold shows *lower* recall than the
+  naive frozen threshold on the misspecified-gradual scenario, despite
+  both being well-calibrated on background (ACI's empirical miscoverage
+  tracks its 0.02 target closely). A three-way ablation
+  (`scripts/aci_recall_gap_ablation.py`: sliding-buffer ACI vs.
+  buffer-frozen ACI vs. a naive fixed threshold, all on an identical
+  score/label stream) isolates the mechanism: freezing the calibration
+  buffer barely moves recall (sliding=0.186, frozen=0.205), and both
+  remain far below the naive fixed threshold (0.427). The sliding buffer
+  is **not** the driver -- `alpha_t`'s online adaptation of the target
+  miscoverage rate itself produces the recall reduction. This is a
+  genuine precision/recall trade-off inherent to adaptive thresholding
+  under this feedback scheme, not a buffer artifact to fix.
 - **`n_jet` as the multiplicity covariate.** `residual.py`'s calibration
   regression and `masked_channel_stream`/`multiplicity_step_stream` all
   use jet count as *the* multiplicity signal. Real AXOL1TL/CICADA-style
@@ -375,9 +420,17 @@ not ~20), and tracing each one down before packaging this up.
   `hazard_lambda`, KSWIN's `alpha`) remain tuned against this project's
   *synthetic* event-count scale and have not been checked against real
   background. CUSUM's default (k=0.5, h=8.0) HAS been checked (see
-  "CUSUM (k,h) retune attempt" above) -- its ARL is the right order of
-  magnitude on real data, but its false-alarm rate is not, and no
-  single-parameter retune fixes this cleanly.
+  "CUSUM (k,h) retune" above): its ARL is the right order of magnitude on
+  real data, but its false-alarm rate is not; a joint `(k,h)` retune
+  narrows the gap meaningfully without closing it, and the residual gap
+  is diagnosed (real background has ~6x the tail-weight of the synthetic
+  generator; autocorrelation is ruled out) but not yet fixed. The
+  natural next step -- calibrating the threshold against the empirical
+  real residual distribution directly, rather than an implicitly
+  Gaussian one -- is identified but not implemented here.
+- Real-data validation draws from a single Open Data record (one run
+  range, 283876-284044, a narrow slice of Run2016H) -- generalization
+  across run periods or datasets is untested.
 - The gradual-drift scenarios (`drift_sim/gradual.py`, lumi-trend based)
   remain synthetic-only -- a single Open Data record has no meaningful
   instantaneous-luminosity trend to perturb (see
