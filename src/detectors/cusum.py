@@ -111,3 +111,81 @@ class CUSUMDetector:
             "shift_detected": bool(shift_detected),
             "direction": direction,
         }
+
+
+    @classmethod
+    def calibrate_h(
+        cls,
+        reference_data,
+        k: float = 0.5,
+        target_far: float = 0.02,
+        window_size: int = 5000,
+        n_bootstrap: int = 200,
+        h_grid=None,
+        two_sided: bool = True,
+        block_size: int = 1,
+        transform=None,
+        seed: int = 0,
+    ):
+        """Empirically calibrate h to hit a target false-alarm rate on
+        burn-in-like data, instead of specifying h in sigma units and
+        hoping Gaussian ARL theory holds. See module docstring / project
+        docs for why this matters when residuals are heavy-tailed.
+        """
+        rng = np.random.default_rng(seed)
+        reference_data = np.asarray(reference_data, dtype=np.float64)
+        if h_grid is None:
+            h_grid = np.arange(2.0, 40.0, 1.0)
+
+        probe = cls(reference_data, k=k, h=float(h_grid[0]), two_sided=two_sided,
+                    transform=transform)
+        mu0, sigma0, tfm = probe.mu0, probe.sigma0, probe.transform
+
+        n = len(reference_data)
+        n_blocks_needed = int(np.ceil(window_size / block_size))
+        z_pool = (tfm(reference_data) - mu0) / sigma0
+
+        pseudo_streams = []
+        for _ in range(n_bootstrap):
+            if block_size == 1:
+                idx = rng.integers(0, n, size=window_size)
+                pseudo_streams.append(z_pool[idx])
+            else:
+                starts = rng.integers(0, max(1, n - block_size), size=n_blocks_needed)
+                blocks = [z_pool[s:s + block_size] for s in starts]
+                pseudo_streams.append(np.concatenate(blocks)[:window_size])
+
+        def far_at_h(h: float) -> float:
+            n_alarms = 0
+            for z in pseudo_streams:
+                s_pos = s_neg = 0.0
+                for zi in z:
+                    s_pos = max(0.0, s_pos + zi - k)
+                    if two_sided:
+                        s_neg = max(0.0, s_neg - zi - k)
+                    if s_pos >= h or (two_sided and s_neg >= h):
+                        n_alarms += 1
+                        break
+            return n_alarms / len(pseudo_streams)
+
+        chosen_h = float(h_grid[-1])
+        far_at_chosen = None
+        for h in h_grid:
+            far = far_at_h(float(h))
+            if far <= target_far:
+                chosen_h = float(h)
+                far_at_chosen = far
+                break
+        if far_at_chosen is None:
+            far_at_chosen = far_at_h(chosen_h)
+            import warnings
+            warnings.warn(
+                f"calibrate_h: no h in the given grid achieved target_far="
+                f"{target_far}; using largest grid value h={chosen_h} "
+                f"(measured FAR={far_at_chosen:.3f}). Extend h_grid's upper "
+                f"bound and retry.",
+                stacklevel=2,
+            )
+
+        return (cls(reference_data, k=k, h=chosen_h, two_sided=two_sided,
+                     transform=transform), far_at_chosen)
