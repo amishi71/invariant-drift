@@ -1,0 +1,52 @@
+{
+  "results": [
+    {
+      "target_far": 0.02,
+      "k": 0.5,
+      "chosen_h": 11.25,
+      "bootstrap_measured_far": 0.015,
+      "held_out_arl_mean": 4656.026666666667,
+      "held_out_false_alarm_rate": 0.13666666666666666,
+      "masked_channel_miss_rate": 0.7,
+      "radiation_damage_miss_rate": 0.3
+    },
+    {
+      "target_far": 0.05,
+      "k": 0.5,
+      "chosen_h": 10.25,
+      "bootstrap_measured_far": 0.05,
+      "held_out_arl_mean": 4345.956666666667,
+      "held_out_false_alarm_rate": 0.26,
+      "masked_channel_miss_rate": 0.5,
+      "radiation_damage_miss_rate": 0.3
+    },
+    {
+      "target_far": 0.1,
+      "k": 0.5,
+      "chosen_h": 9.75,
+      "bootstrap_measured_far": 0.07,
+      "held_out_arl_mean": 4180.4766666666665,
+      "held_out_false_alarm_rate": 0.32,
+      "masked_channel_miss_rate": 0.4,
+      "radiation_damage_miss_rate": 0.0
+    }
+  ],
+  "config": {
+    "n_burn_in": 20000,
+    "n_events": 5000,
+    "n_arl_windows": 300,
+    "n_trials": 10,
+    "vae_epochs": 40,
+    "seed": 3,
+    "tau_damage": 3000.0,
+    "k": 0.5,
+    "target_far": [
+      0.02,
+      0.05,
+      0.1
+    ],
+    "h_step": 0.25,
+    "block_size": 1,
+    "out": "results/calibrated_multiseed/seed3.json"
+  }
+}

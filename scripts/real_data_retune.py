@@ -122,7 +122,8 @@ def main():
     )
 
     arl_start = args.n_burn_in
-    arl_block = args.n_arl_windows * args.n_events
+    MAX_ARL_WINDOWS_RESERVED = 200  # >= any --n-arl-windows you'll ever pass
+    arl_block = MAX_ARL_WINDOWS_RESERVED * args.n_events
     masked_start = arl_start + arl_block
     masked_block = args.n_trials * args.n_events
     rad_start = masked_start + masked_block
