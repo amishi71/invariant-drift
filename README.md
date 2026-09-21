@@ -1,26 +1,63 @@
 # Invariant Drift
 
-**Calibration-Residual Monitoring for Learned Anomaly Triggers**
+**Calibration-residual monitoring for learned anomaly triggers**
 
-Two components for detecting when a learned anomaly trigger's calibration
-has silently gone stale, evaluated on CMS/LHC Open Data:
+## What it is
+
+A learned anomaly trigger — something like CMS's AXOL1TL/CICADA — can go
+silently miscalibrated as beam conditions, pileup, or detector state shift
+underneath it, with nothing flagging that it happened until it's been
+mis-triggering for a while. This project is two independent, complementary
+ways of noticing that, evaluated on CMS/LHC Open Data:
 
 1. **Sequential change-point detection** on a scalar calibration residual
-   (anomaly score jointly with pileup/multiplicity, calibrated against
-   expected luminosity trends) -- CUSUM, Page-Hinkley, and BOCPD
-   (implemented here), compared against ADWIN and KSWIN (river).
-2. **Adaptive conformal inference (ACI)** for online threshold
-   recalibration from Zero-Bias control feedback + delayed offline
-   validation, plus **online false discovery rate control** (LORD,
-   SAFFRON) over windowed batches of the resulting decisions.
+   (anomaly score regressed against pileup/multiplicity and expected
+   luminosity trends) — CUSUM, Page-Hinkley, and BOCPD implemented here,
+   compared against ADWIN and KSWIN from `river`.
+2. **Adaptive conformal inference (ACI)** for online threshold recalibration
+   from Zero-Bias control feedback plus delayed offline validation, with
+   online false discovery rate control (LORD, SAFFRON) over windowed batches
+   of the resulting decisions.
 
-
-Reuses `CUSUMDetector`/`PageHinkleyDetector`'s core logic (frozen-reference
-discipline) and the XRootD streaming/retry infrastructure from
+A proxy VAE trained on background-only events stands in for the real
+trigger's anomaly score, since the actual trigger model isn't accessible
+here. It builds on
 [cms-streaming-shift-detection](https://github.com/amishi71/cms-streaming-shift-detection),
-this project's predecessor (dijet-mass resonance-shift detection). See each
-file's module docstring for exactly what was reused verbatim vs. adapted
-vs. new.
+this project's predecessor on dijet-mass resonance-shift detection, reusing
+its frozen-reference CUSUM/Page-Hinkley logic and XRootD streaming
+infrastructure.
+
+## What's new
+
+The pipeline started synthetic-only and has since been validated end-to-end
+on real CMS Open Data (8.8M cached JetHT events, record 30558, provenance
+checked against CERN's own checksums). Most synthetic findings hold up on
+real data; the real false-alarm rate came in higher than synthetic
+predicted, and that gap has been narrowed and diagnosed but not fully
+closed. Full breakdown, tables, and root-cause analysis:
+**[docs/REAL_DATA_VALIDATION.md](docs/REAL_DATA_VALIDATION.md)**.
+
+## Quickstart
+
+```
+pip install -r requirements.txt
+python main.py                          # small defaults, ~20-30s on CPU, synthetic data
+python main.py --n-burn-in 5000 --n-events 3000 --n-trials 15 --vae-epochs 80
+pytest tests/ -v
+```
+
+`main.py`'s default pipeline (burn-in, all four drift scenarios, the
+radiation-damage case study, throughput benchmark) runs on synthetic data
+and is the fast, dependency-light path for iterating on detector logic.
+
+Real-data validation:
+```
+python3 scripts/real_data_sweep.py --seed 0
+python3 scripts/aggregate_real_sweep.py results/real_seeds/*.json
+```
+See [docs/REAL_DATA_VALIDATION.md](docs/REAL_DATA_VALIDATION.md) for the
+full multi-seed reproduction commands, provenance verification, and the
+`(k, h)` retune / root-cause scripts.
 
 ## Layout
 
@@ -44,392 +81,35 @@ src/
                             real feature arrays instead of the synthetic generator
   evaluation.py            ARL, latency, false-alarm rate, coverage, online FDR
 main.py                    end-to-end orchestration on synthetic data; `python main.py --help`
-scripts/
-  real_data_touchpoint.py            original narrow real-data touchpoint (regression only)
-  real_data_sweep.py                 full detection sweeps on real+injected CMS data
-  aggregate_real_sweep.py            aggregates multi-seed real_data_sweep.py output
-  real_data_retune.py                CUSUM (k,h) retune grid against real background
-  build_real_cache_pyroot.py         PyROOT/RDataFrame-native real-feature extraction
-  validate_pyroot_cache.py           validates the PyROOT cache against the uproot one
-  verify_real_data_provenance.py     checksum + run-number provenance check against the
-                                      official CERN Open Data record
-  diagnose_residual_distribution.py  measures autocorrelation/kurtosis of real vs.
-                                      synthetic burn-in residuals (FA-rate gap diagnosis)
-  aci_recall_gap_ablation.py         three-way ablation isolating the ACI adaptive-
-                                      threshold recall gap to alpha_t, not the buffer
-tests/                      pytest suite, 58 tests (see "Known issues" -- several
-                            are regression tests for real bugs found below)
+scripts/                    real-data sweeps, retuning, provenance checks, ablations
+                            (see docs/REAL_DATA_VALIDATION.md for what each one does)
+tests/                      pytest suite, 58 tests
+docs/
+  FINDINGS.md               bugs found and design decisions made during development
+  REAL_DATA_VALIDATION.md   full real-data validation results and reproduction steps
 ```
 
-## Running it
+## Results summary
 
-```
-pip install -r requirements.txt
-python main.py                          # small defaults, ~20-30s on CPU, synthetic data
-python main.py --n-burn-in 5000 --n-events 3000 --n-trials 15 --vae-epochs 80
-pytest tests/ -v
-```
+| Check                                     | Result                                                                    |
+| ----------------------------------------- | ------------------------------------------------------------------------- |
+| CUSUM vs. BOCPD, radiation-damage drift   | 0.0% vs. 58.7% miss rate (real + synthetic)                               |
+| Masked-channel, default CUSUM (real)      | 70.0% ± 16.3% miss rate                                                   |
+| False-alarm rate, real vs. synthetic      | 66.7% vs. ~17-33% — narrowed via retune, not fully closed                 |
+| Adaptive (ACI) vs. fixed threshold recall | ACI trades recall for calibration guarantees, by design — see FINDINGS.md |
 
-`main.py`'s default pipeline -- burn-in, all 4 drift scenarios, the
-radiation-damage case study, throughput benchmark -- runs on **synthetic
-data** generated by `src/stream_loader.py` and `src/drift_sim/*.py`, and
-remains the fast, dependency-light default for iterating on detector
-logic. The full detector/scenario pipeline has since been validated
-separately on **real CMS Open Data** through a dedicated path (see
-"Real-Data Substrate Validation" below):
+Full tables and methodology: [docs/REAL_DATA_VALIDATION.md](docs/REAL_DATA_VALIDATION.md).
 
-```
-python3 scripts/real_data_sweep.py --seed 0
-python3 scripts/aggregate_real_sweep.py results/real_seeds/*.json
-```
+## Known limitations
 
-`real_object_stream()` in `stream_loader.py` (the live-XRootD/EOS path)
-remains untested against a live endpoint -- all real-data work here uses
-a locally cached feature pool (8.8M events, CMS Open Data record 30558,
-downloaded via `cernopendata-client`), not a live streaming connection.
+- `real_object_stream()`'s live-XRootD/EOS path is untested against a live
+  endpoint — all real-data work here uses a locally cached feature pool.
+- Real-data validation draws from a single Open Data record (one narrow
+  run range) — generalization across run periods is untested.
+- The gradual-drift scenarios remain synthetic-only (a single Open Data
+  record has no meaningful luminosity trend to perturb).
+- The real-data false-alarm rate gap is diagnosed (heavy-tailed residuals)
+  but not yet fixed — see docs/REAL_DATA_VALIDATION.md.
 
-## Real-Data Substrate Validation (multi-seed)
-
-Following the real-data substrate pivot, the full detection pipeline was
-validated on real CMS Open Data (record 30558, JetHT dataset, 8.8M
-cached events) across 6 independently-trained proxy VAEs (seeds 0-5),
-using `scripts/real_data_sweep.py` and this project's actual
-`evaluation.run_detector_on_residuals` path throughout -- not a
-standalone diagnostic (see the one-sided-CUSUM finding below for why
-that distinction matters). Ten non-overlapping 5000-event real segments
-were used per check, with real-and-injected drift via
-`real_masked_channel_stream`/`real_radiation_damage_stream`
-(`src/drift_sim/real_data_injection.py`) -- identical injection math to
-the synthetic generators, applied to real feature arrays instead. This
-is the "real substrate, synthetic controlled perturbation" pattern used
-in the cited Kepler PDC papers (Stumpe et al. 2012, 2014).
-
-### Findings (mean +/- std across 6 seeds)
-
-| Check                                          | Result                    |
-| ---------------------------------------------- | ------------------------- |
-| ARL, no injection (default CUSUM, k=0.5,h=8.0) | ARL = 2991.5 +/- 695.2    |
-| False-alarm rate, no injection                 | 66.7% +/- 19.7%           |
-| Masked-channel, default CUSUM                  | miss_rate 70.0% +/- 16.3% |
-| Masked-channel, one-sided CUSUM (k=0.1,h=16.0) | miss_rate 53.3% +/- 12.5% |
-| Radiation-damage, CUSUM                        | miss_rate 10.0% +/- 10.0% |
-| Radiation-damage, BOCPD                        | miss_rate 38.3% +/- 19.5% |
-
-### What transfers from synthetic to real, and what doesn't
-
-**Transfers cleanly:** the masked-channel failure mode (default CUSUM
-missing the majority of injections) and its partial, unreliable fix
-(one-sided CUSUM) both reproduce on real data, in the same direction and
-a similar magnitude to the synthetic multi-seed results (67-93%
-synthetic vs. 70.0% +/- 16.3% real for the default detector).
-Radiation-damage's qualitative story also transfers: CUSUM is far more
-reliable than BOCPD on this drift type in both substrates (10.0% vs.
-38.3% real miss rate; 0.000 vs. 0.587 synthetic).
-
-**Does not transfer as-is:** the false-alarm rate under the default
-(k=0.5, h=8.0) calibration is substantially higher on real background
-(66.7% +/- 19.7%) than on synthetic data at the same detector settings
-(~17-33% in the synthetic Component-1 sweep). See "CUSUM (k,h) retune"
-below for how much of this gap can be closed, and "Root-cause diagnosis"
-for why the remainder resists closure.
-
-### CUSUM (k,h) retune: partial improvement, root cause identified
-
-Given the FA-rate gap above, `scripts/real_data_retune.py` grid-searched
-CUSUM's `h` (holding `k=0.5`) against real background, reusing cached
-residuals across the grid (no VAE retraining per point). Confirmed
-across 4 seeds (0-3):
-
-| Config        | FA_rate         | masked-channel miss_rate | radiation-damage miss_rate |
-| ------------- | --------------- | ------------------------ | -------------------------- |
-| h=8 (default) | 53.8% +/- 11.4% | 80.0% +/- 10.0%          | 2.5% +/- 4.3%              |
-| h=10          | 8.75% +/- 6.5%  | 92.5% +/- 8.3%           | 15.0% +/- 11.2%            |
-
-`h=10` cuts the false-alarm rate roughly 6x, but at a real cost: masked-
-channel miss-rate (already the harder scenario) gets worse, and
-radiation-damage -- previously near-perfect -- degrades meaningfully.
-h>=12 drives FA-rate to 0 but collapses detection almost entirely (see
-`results/real_data_retune.json`).
-
-A **joint grid over `(k, h)`** finds a meaningfully better trade-off than
-tuning `h` alone. At `k=0.2, h=24` (confirmed across 4 seeds):
-
-| Config               | FA_rate         | masked-channel miss_rate | radiation-damage miss_rate |
-| -------------------- | --------------- | ------------------------ | -------------------------- |
-| k=0.5, h=8 (default) | 53.8% +/- 11.4% | 77.5% +/- 8.3%           | 7.5% +/- 4.3%              |
-| k=0.2, h=24          | 33.8% +/- 7.4%  | 82.5% +/- 13.0%          | **0.0% +/- 0.0%**          |
-
-False-alarm rate drops meaningfully (54%->34%) and radiation-damage
-detection actually *improves* to perfectly reliable, at the cost of a
-modest, noisy increase in masked-channel miss-rate. This is a real,
-non-trivial improvement -- but still not full closure of the gap.
-
-**Root-cause diagnosis.** `scripts/diagnose_residual_distribution.py`
-tests two specific hypotheses for why the gap resists closure: that real
-background residuals are more autocorrelated, or more heavy-tailed, than
-the synthetic generator produces (either would violate CUSUM's implicit
-i.i.d.-Gaussian assumption and inflate false alarms independent of
-threshold tuning). Measured directly on burn-in residuals:
-
-| Metric                | Synthetic | Real   |
-| --------------------- | --------- | ------ |
-| Lag-1 autocorrelation | 0.005     | -0.018 |
-| Excess kurtosis       | 0.072     | 0.452  |
-
-Autocorrelation is negligible and comparable in both substrates (both
-consistent with white noise) -- **ruled out** as the mechanism. Excess
-kurtosis differs substantially: real background has **roughly 6x** the
-tail-weight of the synthetic generator's near-Gaussian residuals. This
-directly implicates tail weight, not serial correlation, as the driver,
-and explains why `(k, h)` retuning cannot fully close the gap: it
-adjusts threshold location and sensitivity, not distributional shape. A
-more targeted fix -- calibrating the threshold against the empirical,
-heavy-tailed real residual distribution directly, or a robust/quantile-
-based reference distribution in place of CUSUM's standard formulation --
-is a well-posed, testable next step, identified here but not yet
-implemented.
-
-### Extraction backend: uproot vs. PyROOT
-
-Feature extraction from real CMS Open Data is implemented two ways --
-the original `uproot`-based path (`src/stream_loader.py::real_object_stream`
-/ `_compute_object_features` / `_compute_pileup`) and a PyROOT/RDataFrame-
-native rebuild (`scripts/build_real_cache_pyroot.py`), covering the same
-feature set (jet1/jet2 kinematics, n_jet, MET, HT, n_muon, n_electron)
-and the same `nJet >= 2` selection. Validated **bit-identical** against
-each other: `scripts/validate_pyroot_cache.py` reports max_abs_diff=0.0
-across all 12 features and both metadata arrays (pileup, n_jet), over
-all 8,815,092 cached events. (One implementation note for anyone
-reproducing this: `ROOT.ROOT.EnableImplicitMT()` must stay **off** during
-extraction -- RDataFrame's multithreaded execution does not guarantee
-`AsNumpy()`'s row order matches sequential file/event order, which broke
-the initial row-by-row comparison until disabled.) The PyROOT path is now
-the default cache source (`data/real_cache/jetht_features.npz`); the
-original uproot-derived cache is kept for reference
-(`data/real_cache/jetht_features_uproot.npz`).
-
-### Data provenance
-
-The 5 real CMS Open Data files used throughout this project (record
-30558, `/JetHT/Run2016H-UL2016_MiniAODv2_NanoAODv9-v1/NANOAOD`, DOI
-`10.7483/OPENDATA.CMS.8ALJ.MQSO`) were independently verified, not just
-downloaded and trusted:
-
-- **File integrity**: every local file's size and adler32 checksum match
-  CERN's official record metadata exactly (`scripts/verify_real_data_provenance.py`).
-- **Content authenticity**: the record declares Run2016H, run numbers
-  281613-284044. The actual `run` branch values found inside the files
-  (283876-284044) fall inside that declared range -- confirming this is
-  genuine CMS collision data, not synthetic or misattributed. EDM
-  provenance objects (`edm::ProcessHistory`, `edm::ProcessConfiguration`,
-  etc., visible as ROOT warnings when reading the files) further confirm
-  these are real CMSSW-produced NanoAOD files, not a placeholder format.
-
-Reproduce with:
-```bash
-cernopendata-client get-metadata --recid 30558 > /tmp/record_30558.json
-python3 scripts/verify_real_data_provenance.py
-```
-
-Reproduce the full real-data validation with:
-```bash
-for s in 0 1 2 3 4 5; do
-  python3 scripts/real_data_sweep.py --seed $s --out results/real_seeds/seed${s}.json
-done
-python3 scripts/aggregate_real_sweep.py results/real_seeds/*.json
-
-# (k,h) retune sweep and root-cause diagnosis
-python3 scripts/real_data_retune.py --k-values 0.2,0.3,0.4,0.5 --h-values 6,8,10,12,16,20,24
-python3 scripts/diagnose_residual_distribution.py
-
-# ACI recall-gap ablation
-python3 scripts/aci_recall_gap_ablation.py
-
-# PyROOT extraction (run in a SEPARATE venv with ROOT installed -- see
-# scripts/build_real_cache_pyroot.py's module docstring for setup, since
-# ROOT is not pip-installable into a normal project venv)
-python3 scripts/build_real_cache_pyroot.py
-python3 scripts/validate_pyroot_cache.py
-```
-
-## Known issues / design decisions found during development
-
-Left in deliberately, not swept under the rug -- these were real bugs
-caught by actually running the code and cross-checking it against theory,
-not hypothetical concerns:
-
-- **Score log-transform (residual.py).** The raw VAE reconstruction-error
-  score is right-skewed (skew ~1.35 empirically) since it's a sum-of-
-  squares-type quantity. Regressing the raw score and standardizing the
-  residual does NOT fix this -- the conditional distribution is still
-  skewed after de-meaning, which silently breaks CUSUM/Page-Hinkley's
-  Gaussian-ARL assumptions (empirically: false-alarm rate ~100% within a
-  few hundred events instead of the theoretical ARL0 in the thousands).
-  Fixed by fitting the calibration regression in log-score space by
-  default (`score_transform="log"`), mirroring what Project A did for its
-  own skewed observable (dijet mass).
-- **Page-Hinkley two-sided bug (page_hinkley.py).** The down-side branch
-  tracked a running MAXIMUM of the negated cumulative sum instead of a
-  running MINIMUM. Since the cumulative sum has a `-delta` drift term
-  regardless of any real shift, `max - current` grows ~linearly with event
-  count on its own -- guaranteed false alarms within ~20-45 events on pure
-  noise, reproduced in 10/10 trials before the fix. Fixed to mirror the
-  up-side construction exactly; verified against a direct step-by-step
-  equivalence to CUSUM's S+ recursion (`tests/test_cusum_page_hinkley.py`).
-- **BOCPD detection criterion (bocpd.py).** `P(r_t = 0)` is the wrong
-  statistic to threshold: once the run-length posterior concentrates on a
-  single dominant hypothesis (which happens quickly), the predictive-
-  likelihood term cancels out of the R(0)/R(r*+1) ratio, so P(r_t=0)
-  converges to ~the bare hazard rate regardless of how surprising the new
-  data point is -- verified directly (an injected 4-sigma shift left
-  P(r=0) pinned at ~hazard while `map_run_length` correctly collapsed to
-  3-5). Fixed to threshold `P(r_t <= r_min)` instead (mass on *small* run
-  lengths generally, not r=0 specifically). This introduced a second
-  issue -- `P(r_t <= r_min)` is mechanically 1.0 for the first `r_min`
-  events regardless of data -- fixed with a `warm_up_events` gate on
-  `is_ready()`, the same convention every detector here already uses.
-- **KSWIN's default alpha (kswin.py).** river's KSWIN reruns a fresh
-  KS-test on *every single event* once its window fills (confirmed from
-  river's source, not just its docstring's "should be set below 0.01"
-  hint) -- over a stream of a few thousand events that's a few thousand
-  repeated hypothesis tests with no multiple-testing correction, so
-  river's own default (0.005) gives a false-alarm rate near 100% (10/10
-  trials, reproduced empirically). Retuned the default here to `1e-3`,
-  which brings the false-alarm rate over this project's event-count scale
-  down to the same order of magnitude as the other four detectors while
-  still detecting a real shift within a few dozen events. This is an
-  empirical operating point for *this* event budget, not a principled
-  default -- retune if your stream length changes substantially.
-- **LORD/SAFFRON rejection indexing (fdr.py).** `rejections` was storing
-  1-indexed test numbers, while `evaluation.py`'s `evaluate_online_fdr`
-  uses those values directly as 0-indexed positions into an array of
-  per-window ground-truth labels -- a rejection on the very last test of
-  a run produced an `IndexError` (one past the last valid index).
-  Straightforward off-by-one fix; regression test in `tests/test_fdr.py`.
-- **`masked_channel_stream` doesn't register as anomalous to the VAE at
-  moderate settings (abrupt.py / component 2 design in main.py).** This
-  isn't a bug so much as a real empirical finding worth flagging: a
-  uniform multiplicative *drop* in HT/MET/jet-pT (channels going quiet)
-  pushes events toward a region the VAE reconstructs *well* -- background
-  naturally includes low-activity events -- so the raw anomaly score
-  actually *falls* rather than rises at drop_fraction up to ~0.7 (only an
-  extreme ~0.9 drop clearly registers). Component 2's `AdaptiveConformal
-  Threshold.decide()` is a one-sided "flag if score is high" gate, which
-  structurally cannot catch this failure mode -- but Component 1's
-  two-sided residual detectors can (a systematic *negative* residual is
-  exactly what their down-side branch is for). This is why Component 2's
-  demo in `main.py` uses `misspecified_gradual_stream` (an additive,
-  score-*raising* bias) instead: it's the right shape of failure for a
-  one-sided trigger-decision threshold, and `masked_channel_stream` is a
-  genuine, useful stress test for Component 1 specifically, not a
-  redundant scenario. Both components existing independently isn't
-  incidental -- this is a concrete case where the residual-based detector
-  catches something the threshold-based one structurally can't.
-- **Adaptive threshold's recall vs. the fixed baseline -- resolved.**
-  (main.py's `detection_efficiency_vs_fixed_threshold` output). In the
-  default run, the adaptive ACI threshold shows *lower* recall than the
-  naive frozen threshold on the misspecified-gradual scenario, despite
-  both being well-calibrated on background (ACI's empirical miscoverage
-  tracks its 0.02 target closely). A three-way ablation
-  (`scripts/aci_recall_gap_ablation.py`: sliding-buffer ACI vs.
-  buffer-frozen ACI vs. a naive fixed threshold, all on an identical
-  score/label stream) isolates the mechanism: freezing the calibration
-  buffer barely moves recall (sliding=0.186, frozen=0.205), and both
-  remain far below the naive fixed threshold (0.427). The sliding buffer
-  is **not** the driver -- `alpha_t`'s online adaptation of the target
-  miscoverage rate itself produces the recall reduction. This is a
-  genuine precision/recall trade-off inherent to adaptive thresholding
-  under this feedback scheme, not a buffer artifact to fix.
-- **`n_jet` as the multiplicity covariate.** `residual.py`'s calibration
-  regression and `masked_channel_stream`/`multiplicity_step_stream` all
-  use jet count as *the* multiplicity signal. Real AXOL1TL/CICADA-style
-  monitoring would likely track multiple object multiplicities (jets,
-  muons, electrons) jointly -- simplified to one for this build; the
-  regression's design matrix (`residual.py::_design_matrix`) is the place
-  to extend this.
-- **BOCPD underperforms CUSUM on continuous, non-resetting drift
-  (`drift_sim/radiation_damage.py`, `main.py`'s space case study) --
-  confirmed across 5 independently-trained VAEs, not just one run.** On
-  the permanent monotonic gain-decay scenario, CUSUM missed 0/75 trials
-  across all 5 seeds (miss_rate=0.000, std=0.000). BOCPD's miss rate
-  varies substantially by seed (0.267-0.867, mean=0.587, std=0.208) and,
-  when it does fire, tends to do so either very early (<150 events) or
-  not at all -- no stable middle latency. The direction of this finding
-  (CUSUM reliable, BOCPD not, on this drift type) is solid; the specific
-  BOCPD miss-rate figure is not a fixed constant and should be reported
-  as a mean+/-std range in any writeup, not a single number. Plausible
-  mechanism, still stated as plausible not proven: BOCPD's Normal-Inverse-
-  Gamma model assumes roughly-constant parameters within a "run" --
-  continuous drift can get absorbed into an inflating variance estimate
-  rather than triggering a run-length reset, while CUSUM's fixed-slope
-  accumulation has no equivalent escape hatch. **This finding has since
-  been reproduced on real data** -- see "Real-Data Substrate Validation"
-  above.
-- **BOCPD and KSWIN fail the project's own throughput bar
-  (`src/benchmark.py`).** CUSUM/Page-Hinkley/ADWIN run at single-digit
-  microseconds/event; BOCPD is ~2 orders of magnitude slower (vectorized
-  NIG updates over many active run-length hypotheses), KSWIN ~3 orders of
-  magnitude slower (a fresh KS-test every event, see its own docstring).
-  If "millions of events per second" is a claim the paper makes, these
-  two detectors don't meet it as implemented -- report this plainly.
-- **One-sided CUSUM for masked-channel: real improvement, smaller than
-  first measured, because of an evaluation-semantics interaction
-  (`main.py::run_masked_channel_onesided_case_study`).** The default
-  two-sided CUSUM (k=0.5, h=8.0) misses the masked-channel scenario
-  73-93% of the time across seeds tested -- the residual shift here
-  (~0.1-0.2 sigma) is real but an order of magnitude smaller than what
-  k=0.5 is tuned to catch efficiently, and no two-sided (k, h) setting
-  found by grid search catches it without collapsing ARL0 to an unusable
-  level. A one-sided CUSUM (k=0.1, h=16.0, monitoring only the known
-  failure direction) was tuned and looked like a clean fix in an isolated
-  diagnostic script (miss_rate 0.0-0.075). It is NOT that clean once
-  evaluated with this project's actual shared evaluation function,
-  `evaluation.run_detector_on_residuals()` -- which stops at the FIRST
-  alarm anywhere in a stream and counts an early false alarm as a full
-  miss of the real shift. Because the one-sided config is meaningfully
-  more sensitive (ARL0 ~3500, meaning a real chance of a pre-changepoint
-  false alarm within a 2500-event pre-changepoint window), this
-  single-shot evaluation penalizes it more than the less-sensitive
-  default. Net result: one-sided still beats two-sided at every seed
-  checked, but nowhere near the initial "near-total detection" estimate.
-  Reported here as a genuine methodological finding, not a solved
-  problem: a more sensitive, correctly-directed detector still trades
-  against false-alarm risk under a strict single-shot detection
-  semantics, and that trade-off is real, not a bug to engineer away.
-  **This finding has since been reproduced on real data (n=6 seeds)** --
-  see "Real-Data Substrate Validation" above.
-
-None of the above were caught by writing the tests first and hoping --
-they were caught by running `main.py` end-to-end, noticing numbers that
-didn't match textbook theory (CUSUM ARL0 for k=0.5,h=10 should be ~22,000,
-not ~20), and tracing each one down before packaging this up.
-
-## What's stubbed / needs further validation
-
-- `real_object_stream()`'s live-XRootD/EOS path (stream_loader.py) is
-  untested against a live endpoint -- all real-data work in this repo
-  uses a locally cached feature pool downloaded via `cernopendata-client`,
-  not a live streaming connection.
-- The proxy VAE's feature set (jet1/jet2 kinematics, MET, HT, n_jet,
-  n_muon, n_electron) is a reasonable AXOL1TL-object analog but hasn't
-  been validated against a real anomaly-detection baseline -- see
-  `docs/ADVISOR_NOTES.md` for the scope discussion this rests on.
-- Detector hyperparameters (Page-Hinkley's `lam`, BOCPD's
-  `hazard_lambda`, KSWIN's `alpha`) remain tuned against this project's
-  *synthetic* event-count scale and have not been checked against real
-  background. CUSUM's default (k=0.5, h=8.0) HAS been checked (see
-  "CUSUM (k,h) retune" above): its ARL is the right order of magnitude on
-  real data, but its false-alarm rate is not; a joint `(k,h)` retune
-  narrows the gap meaningfully without closing it, and the residual gap
-  is diagnosed (real background has ~6x the tail-weight of the synthetic
-  generator; autocorrelation is ruled out) but not yet fixed. The
-  natural next step -- calibrating the threshold against the empirical
-  real residual distribution directly, rather than an implicitly
-  Gaussian one -- is identified but not implemented here.
-- Real-data validation draws from a single Open Data record (one run
-  range, 283876-284044, a narrow slice of Run2016H) -- generalization
-  across run periods or datasets is untested.
-- The gradual-drift scenarios (`drift_sim/gradual.py`, lumi-trend based)
-  remain synthetic-only -- a single Open Data record has no meaningful
-  instantaneous-luminosity trend to perturb (see
-  `src/drift_sim/real_data_injection.py`'s module docstring).
+For the full list of bugs found and design decisions made while building
+this, see [docs/FINDINGS.md](docs/FINDINGS.md).
