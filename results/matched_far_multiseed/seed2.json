@@ -1,0 +1,44 @@
+{
+  "results": {
+    "CUSUM": {
+      "chosen_param": 9.75,
+      "achieved_far": 0.05,
+      "miss_rate": 0.04,
+      "latency_mean": 334.3958333333333,
+      "latency_std": 22.457125431338913
+    },
+    "Page-Hinkley": {
+      "chosen_param": 10.0,
+      "achieved_far": 0.02,
+      "miss_rate": 0.04,
+      "latency_mean": 336.3541666666667,
+      "latency_std": 22.20593912985643
+    },
+    "ADWIN": {
+      "chosen_param": 0.04421499907374487,
+      "achieved_far": 0.05,
+      "miss_rate": 0.0,
+      "latency_mean": 265.56,
+      "latency_std": 30.586376052092213
+    },
+    "KSWIN": {
+      "chosen_param": 6.105402296585326e-05,
+      "achieved_far": 0.02,
+      "miss_rate": 0.0,
+      "latency_mean": 447.64,
+      "latency_std": 77.21418522525508
+    }
+  },
+  "config": {
+    "n_burn_in": 3000,
+    "n_events": 2000,
+    "n_stable_windows": 100,
+    "n_trials": 50,
+    "vae_epochs": 40,
+    "seed": 2,
+    "onset_frac": 0.3,
+    "bias_rate": 0.5,
+    "target_far": 0.05,
+    "out": "results/matched_far_multiseed/seed2.json"
+  }
+}
