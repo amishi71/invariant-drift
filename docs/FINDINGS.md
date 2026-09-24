@@ -146,3 +146,15 @@ sensitive, correctly-directed detector still trades against false-alarm
 risk under strict single-shot detection semantics, and that trade-off is
 real. This finding has since reproduced on real data (n=6 seeds; see
 [REAL_DATA_VALIDATION.md](REAL_DATA_VALIDATION.md)).
+## Matched-FAR baseline comparison (CUSUM vs. Page-Hinkley vs. ADWIN vs. KSWIN)
+
+At matched ~5% false-alarm rate on synthetic gradual-drift data (6 seeds,
+50 trials/seed), ADWIN detects 17% faster than CUSUM (264 vs. 318 mean
+events to detection) while also achieving a lower miss rate (1.3% vs.
+3.7%) -- consistent across every individual seed, not just on average.
+Page-Hinkley tracks CUSUM almost exactly, as expected from their proven
+mathematical equivalence. KSWIN is slowest on both axes; its false-alarm
+match was also the least precise of the four (see caveat in the full
+writeup). Full methodology, a real search-direction bug caught and fixed
+during development, and reproduction commands:
+[docs/BASELINE_COMPARISON.md](BASELINE_COMPARISON.md).
