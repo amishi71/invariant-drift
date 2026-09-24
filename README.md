@@ -2,13 +2,7 @@
 
 **Calibration-residual monitoring for learned anomaly triggers**
 
-## What it is
-
-A learned anomaly trigger — something like CMS's AXOL1TL/CICADA — can go
-silently miscalibrated as beam conditions, pileup, or detector state shift
-underneath it, with nothing flagging that it happened until it's been
-mis-triggering for a while. This project is two independent, complementary
-ways of noticing that, evaluated on CMS/LHC Open Data:
+A learned anomaly trigger can go silently miscalibrated as beam conditions, pileup, or detector state shift underneath it, with nothing flagging that it happened until it's been mis-triggering for a while. This project is two independent, complementary ways of noticing that, evaluated on CMS/LHC Open Data:
 
 1. **Sequential change-point detection** on a scalar calibration residual
    (anomaly score regressed against pileup/multiplicity and expected
@@ -27,7 +21,7 @@ this project's predecessor on dijet-mass resonance-shift detection, reusing
 its frozen-reference CUSUM/Page-Hinkley logic and XRootD streaming
 infrastructure.
 
-## What's new
+## Latest results
 
 The pipeline started synthetic-only and has since been validated end-to-end
 on real CMS Open Data (8.8M cached JetHT events, record 30558, provenance
@@ -36,6 +30,11 @@ real data; the real false-alarm rate came in higher than synthetic
 predicted, and that gap has been narrowed and diagnosed but not fully
 closed. Full breakdown, tables, and root-cause analysis:
 **[docs/REAL_DATA_VALIDATION.md](docs/REAL_DATA_VALIDATION.md)**.
+
+At a matched false-alarm rate, ADWIN detects drift 17% faster than CUSUM
+while also missing fewer events (6-seed synthetic comparison against
+Page-Hinkley/ADWIN/KSWIN):
+**[docs/BASELINE_COMPARISON.md](docs/BASELINE_COMPARISON.md)**.
 
 ## Quickstart
 
@@ -87,18 +86,20 @@ tests/                      pytest suite, 58 tests
 docs/
   FINDINGS.md               bugs found and design decisions made during development
   REAL_DATA_VALIDATION.md   full real-data validation results and reproduction steps
+  BASELINE_COMPARISON.md    matched-false-alarm-rate comparison vs. Page-Hinkley/ADWIN/KSWIN
 ```
 
 ## Results summary
 
-| Check                                     | Result                                                                    |
-| ----------------------------------------- | ------------------------------------------------------------------------- |
-| CUSUM vs. BOCPD, radiation-damage drift   | 0.0% vs. 58.7% miss rate (real + synthetic)                               |
-| Masked-channel, default CUSUM (real)      | 70.0% ± 16.3% miss rate                                                   |
-| False-alarm rate, real vs. synthetic      | 66.7% vs. ~17-33% — narrowed via retune, not fully closed                 |
-| Adaptive (ACI) vs. fixed threshold recall | ACI trades recall for calibration guarantees, by design — see FINDINGS.md |
+| Check                                                   | Result                                                                              |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| ADWIN vs. CUSUM at matched ~5% FAR (synthetic, 6 seeds) | ADWIN 17% faster to detection (264 vs. 318 events), lower miss rate (1.3% vs. 3.7%) |
+| CUSUM vs. BOCPD, radiation-damage drift                 | 0.0% vs. 58.7% miss rate (real + synthetic)                                         |
+| Masked-channel, default CUSUM (real)                    | 70.0% ± 16.3% miss rate                                                             |
+| False-alarm rate, real vs. synthetic                    | 66.7% vs. ~17-33% — narrowed via retune, not fully closed                           |
+| Adaptive (ACI) vs. fixed threshold recall               | ACI trades recall for calibration guarantees, by design — see FINDINGS.md           |
 
-Full tables and methodology: [docs/REAL_DATA_VALIDATION.md](docs/REAL_DATA_VALIDATION.md).
+Full tables and methodology: [docs/REAL_DATA_VALIDATION.md](docs/REAL_DATA_VALIDATION.md) and [docs/BASELINE_COMPARISON.md](docs/BASELINE_COMPARISON.md).
 
 ## Known limitations
 
