@@ -67,14 +67,18 @@ anomaly score actually falls rather than rises, up to a drop fraction of
 about 0.7 (only an extreme ~0.9 drop clearly registers). Component 2's
 `AdaptiveConformalThreshold.decide()` is a one-sided "flag if score is
 high" gate, which structurally can't catch this. Component 1's two-sided
-residual detectors can — a systematic negative residual is exactly what
-their down-side branch exists for. This is why Component 2's demo in
+residual detectors can in principle see it — a systematic negative
+residual is exactly what their down-side branch exists for — but in
+practice the default two-sided CUSUM catches it in a minority of trials
+(see the miss rates in [REAL_DATA_VALIDATION.md](REAL_DATA_VALIDATION.md)
+and the one-sided case below). This is why Component 2's demo in
 `main.py` uses `misspecified_gradual_stream` (an additive, score-raising
 bias) instead of `masked_channel_stream`: it's the right shape of failure
 for a one-sided threshold, and `masked_channel_stream` is a genuinely
 useful stress test for Component 1, not a redundant scenario. The two
 components aren't redundant with each other — this is a concrete case
-where one catches what the other structurally can't.
+where a one-sided score gate structurally can't flag the failure, while a
+residual detector at least can.
 
 **Adaptive threshold recall vs. the fixed baseline.** In the default run
 (`main.py`'s `detection_efficiency_vs_fixed_threshold` output), the
@@ -115,13 +119,27 @@ triggering a run-length reset, while CUSUM's fixed-slope accumulation has
 no equivalent escape hatch. This finding has since reproduced on real data
 (see [REAL_DATA_VALIDATION.md](REAL_DATA_VALIDATION.md)).
 
-**BOCPD and KSWIN fail the project's own throughput bar**
-(`src/benchmark.py`). CUSUM/Page-Hinkley/ADWIN run at single-digit
-microseconds per event; BOCPD is roughly two orders of magnitude slower
-(vectorized NIG updates over many active run-length hypotheses), KSWIN
-about three orders of magnitude slower (a fresh KS-test every event — see
-its own docstring). If a "millions of events per second" claim goes in
-the paper, these two detectors don't meet it as implemented.
+**Throughput vs. a "millions of events per second" bar** (`src/benchmark.py`,
+Python on a general-purpose CPU; update+evaluate per event). A million
+events per second needs <= ~1 microsecond per event. In the ORIGINAL run
+only ADWIN cleared it (~0.96 us, ~1.05M/s); CUSUM was ~4.2 us (~240k/s),
+Page-Hinkley ~4.3 us (~230k/s), BOCPD ~260 us (~3.8k/s), KSWIN ~1.6 ms
+(~620/s). Do not cite the CUSUM/Page-Hinkley figures: (1) their cost was
+dominated by NumPy overhead (a per-event array allocation) and by
+`tracemalloc` running during timing, not by the algorithms, which are a few
+additions, compares and maxes per event; the benchmark now times
+throughput, tail latency and memory in separate passes, and CUSUM and
+Page-Hinkley `update()` have a scalar fast path (numerically identical).
+Rerun the benchmark to refresh the table: the CUSUM/Page-Hinkley verdict
+against the 1M/s bar may change, whereas BOCPD and KSWIN (hundreds of
+microseconds to milliseconds) will not. (2) These are Python timings,
+not hardware cycle counts, and say nothing about FPGA or flight-computer
+feasibility. The defensible comparison is asymptotic cost: CUSUM and
+Page-Hinkley are O(1) in time and memory per event; ADWIN's bucket
+structure gives roughly logarithmic cost in the window length; BOCPD's
+cost grows with the number of retained run-length hypotheses (bounded here
+by pruning and `max_run_length`); KSWIN runs a two-sample KS test on every
+event, so its cost grows with the window and sample sizes.
 
 **One-sided CUSUM for masked-channel: a real improvement, smaller than it
 first looked** (`main.py::run_masked_channel_onesided_case_study`). The

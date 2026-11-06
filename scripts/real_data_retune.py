@@ -3,8 +3,10 @@ scripts/real_data_retune.py
 
 Quick hyperparameter retune experiment: does adjusting CUSUM's (k, h) fix
 the real-data false-alarm-rate gap found in the multi-seed validation
-(README "Real-Data Substrate Validation" -- FA_rate=66.7%+/-19.7% real
-vs ~17-33% synthetic at the default k=0.5,h=8.0)?
+(README "Real-Data Substrate Validation" -- FA_rate=66.7%+/-19.7% real over
+5000-event windows vs ~41% expected for ideal i.i.d. Gaussian residuals at
+the default k=0.5,h=8.0; an earlier "~17-33% synthetic" figure came from
+2000-event windows with n=6 and is not comparable)?
 
 Detector hyperparameters don't change the underlying residuals -- only
 how they're thresholded -- so this reuses ONE real burn-in/calibration
@@ -18,8 +20,9 @@ Reports, for each (k, h):
     one-sided variant is a separate, already-documented finding)
   - radiation-damage miss_rate
 
-Goal: find an h that brings real FA-rate down toward the synthetic
-~17-33% range without destroying detection sensitivity. This is a
+Goal: find an h that brings real FA-rate down toward (or below) the
+~41% ideal-Gaussian expectation for 5000-event windows without
+destroying detection sensitivity. This is a
 diagnostic sweep on a SINGLE seed -- confirm any promising candidate
 across multiple VAE seeds (same pattern as real_data_sweep.py's --seed)
 before citing a specific number in the paper.

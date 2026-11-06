@@ -1,12 +1,24 @@
 # Real-data validation
 
-After the real-data pivot, the full pipeline was run on real CMS Open Data
-(record 30558, JetHT dataset, 8.8M cached events) across six independently
-trained proxy VAEs (seeds 0-5), using `scripts/real_data_sweep.py` and the
+**Scope (read first).** Real-data runs use CMS Open Data record 30558
+(2016 JetHT NanoAOD: offline-reconstructed jet/MET/HT/multiplicity
+features, 8.8M cached events). JetHT is a prescaled, jet-trigger-selected
+stream, not zero-bias, and the features are not Level-1 trigger objects.
+The VAE is an AXOL1TL-style proxy: no AXOL1TL or CICADA data, inputs, or
+scores are used. Only CUSUM (default, retuned, one-sided, empirically
+calibrated) and BOCPD (radiation-damage case only) have been run on real
+data. Page-Hinkley, ADWIN, and KSWIN (the matched-FAR comparison is
+synthetic-only) and ACI/LORD/SAFFRON have not.
+
+After the real-data pivot, the CUSUM/BOCPD pipeline was run on real CMS
+Open Data (record 30558, JetHT dataset, 8.8M cached events) across six
+independently trained proxy VAEs (seeds 0-5), using `scripts/real_data_sweep.py` and the
 same `evaluation.run_detector_on_residuals` path the synthetic results
 use — not a standalone diagnostic (this matters; see the one-sided-CUSUM
 note in [FINDINGS.md](FINDINGS.md)). Each seed used ten non-overlapping
-5000-event real segments, with drift injected via
+5000-event real segments (the burn-in and the segments are the same real
+events for every seed -- only the VAE seed varies, so the +/- below reflects
+VAE variability, not sampling variability over data), with drift injected via
 `real_masked_channel_stream`/`real_radiation_damage_stream`
 (`src/drift_sim/real_data_injection.py`) — same injection math as the
 synthetic generators, just applied to real feature arrays. This mirrors
@@ -24,19 +36,36 @@ the Kepler PDC papers (Stumpe et al. 2012, 2014).
 | Radiation-damage, CUSUM                         | miss rate 10.0% ± 10.0% |
 | Radiation-damage, BOCPD                         | miss rate 38.3% ± 19.5% |
 
+"Miss rate" is the repo's single-shot definition: an alarm raised *before*
+the true onset (event 2500 for masked-channel) counts as a miss, so these
+figures include pre-onset false alarms. Radiation-damage rows use
+`tau_damage=3000` (onset at event ~153); the synthetic radiation-damage
+figures quoted elsewhere use `tau_damage=400` (onset at event ~20) and are
+not like-for-like. A real run at `tau_damage=400` is pending.
+
 **What holds up on real data:** the masked-channel failure mode (default
 CUSUM missing most injections) and its partial fix (one-sided CUSUM) both
 reproduce in the same direction and roughly the same magnitude as the
 synthetic runs (67-93% synthetic vs. 70.0% ± 16.3% real for the default
-detector). The radiation-damage story holds too — CUSUM is far more
-reliable than BOCPD on this drift type in both substrates (10.0% vs. 38.3%
-real miss rate; 0.000 vs. 0.587 synthetic).
+detector; both at `drop_fraction=0.4`). The radiation-damage story holds too — CUSUM is far more
+reliable than BOCPD on this drift type in both substrates in direction
+(10.0% vs. 38.3% real miss rate at `tau_damage=3000`; 0.000 vs. 0.587
+synthetic at `tau_damage=400` -- different drift speeds, so compare the
+direction, not the magnitudes).
 
-**What doesn't transfer directly:** the false-alarm rate under the default
-(k=0.5, h=8.0) settings is much higher on real background (66.7% ± 19.7%)
-than synthetic data gives at the same settings (roughly 17-33% in the
-synthetic sweep). See below for how far retuning closes this, and the
-root-cause section for why it doesn't close all the way.
+**What may not transfer:** the false-alarm rate under the default
+(k=0.5, h=8.0) settings on real background is 66.7% ± 19.7% over
+5000-event windows. The earlier comparison figure ("roughly 17-33% in the
+synthetic sweep") came from 2000-event windows with n=6 trials and is not
+comparable. For ideal i.i.d. Gaussian residuals, the false-alarm
+probability at k=0.5, h=8 is about 41% over 5000 events and about 19% over
+2000 (Monte Carlo, 20,000 trials; Siegmund's approximation gives a
+two-sided ARL0 of roughly 9,600 events). So the real-data excess over the
+Gaussian expectation is roughly 1.3-1.6x, not the 2-4x the earlier
+comparison implied. The synthetic pipeline's own false-alarm rate at
+5000-event windows has not been measured yet -- run
+`scripts/synthetic_far_windows.py`. See below for retuning and for what
+the residual diagnostics do and do not show.
 
 ## CUSUM (k, h) retune
 
@@ -79,14 +108,18 @@ burn-in residuals:
 | Lag-1 autocorrelation | 0.005     | -0.018 |
 | Excess kurtosis       | 0.072     | 0.452  |
 
-Autocorrelation is negligible in both cases — ruled out. Kurtosis is the
-real difference: real background residuals have roughly 6x the tail
-weight of the synthetic generator. That's a distributional-shape problem,
-which `(k, h)` retuning can't fix since it only moves threshold location
-and sensitivity. Calibrating the threshold against the empirical,
-heavy-tailed real distribution directly — or swapping in a robust/
-quantile-based reference — looks like the right next step, but isn't
-implemented yet.
+Lag-1 autocorrelation is negligible in both cases. Excess kurtosis is
+higher on real data (0.45 vs 0.07), but 0.45 is a mild departure from
+Gaussian, and both numbers are measured on the *burn-in* residuals, which
+are in-sample for the VAE and the calibration regression (mean 0 and std 1
+by construction). These diagnostics therefore do not establish heavy tails
+as the cause of the real-data false-alarm excess: they do not examine
+held-out windows, and ACF is only checked to lag 5. The cause is open. A
+small held-out residual offset (e.g. mean +0.1, or std x1.05) would by
+itself reproduce the observed rates at h=8, 10 and 11 (simulation), so the
+next step is to measure held-out per-window residual mean/std before
+choosing a fix (empirical-threshold calibration, robust scaling, or a
+three-way burn-in split).
 
 ## Extraction backend: uproot vs. PyROOT
 
@@ -166,8 +199,9 @@ python3 scripts/validate_pyroot_cache.py
   CUSUM's default (k=0.5, h=8.0) has been checked (see above): its ARL is
   the right order of magnitude on real data, but its false-alarm rate
   isn't; a joint `(k, h)` retune narrows the gap without closing it, and
-  the residual gap is diagnosed (real background has ~6x the tail weight
-  of the synthetic generator; autocorrelation is ruled out) but not fixed.
+  the residual gap's cause is not yet established (real burn-in residuals
+  have mildly higher excess kurtosis, 0.45 vs 0.07, but the diagnostics only
+  cover in-sample burn-in residuals; see "Root cause" above).
   Calibrating the threshold against the empirical real residual
   distribution directly, instead of an implicitly Gaussian one, is the
   natural next step but isn't implemented here.

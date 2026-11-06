@@ -2,6 +2,11 @@
 using the cached real feature pool (data/real_cache/jetht_features.npz)
 instead of synthetic_object_stream. Reuses train_proxy_vae, anomaly_score,
 and CalibrationModel UNCHANGED -- only the data source differs.
+
+Data note: the cached pool is CMS Open Data JetHT (record 30558, NanoAOD,
+2016) -- a prescaled, jet-trigger-selected stream, NOT zero-bias -- with
+offline-reconstructed features, not L1 trigger objects. The VAE is an
+AXOL1TL-style proxy; no AXOL1TL or CICADA data, inputs, or scores are used.
 """
 import numpy as np
 from src.proxy_vae import train_proxy_vae, anomaly_score
