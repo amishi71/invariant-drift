@@ -1,0 +1,13 @@
+[real burn-in] 20000 events, VAE loss=3.2261, residual mean=-0.000 std=1.000
+
+=== real JetHT, drop_fraction=0.4  (n_trials=30) ===
+  mean residual shift after onset: -0.113 sigma
+  one-sided score gate (q=0.99): flag rate 0.0111 before -> 0.0125 after onset; post > pre in 67% of trials
+  detector                                                   pre-alarm 1-shot miss fresh det delay(med)
+  CUSUM up-only, residual (high-score-gate analogue)              0.17        0.93      0.10       1122
+  CUSUM two-sided, residual (default k=0.5,h=8)                   0.30        0.47      0.63        936
+  CUSUM two-sided, raw log-score (no regression)                  0.63        0.70      0.83        532
+  CUSUM down-only, residual (oracle direction k=0.1,h=16)         0.83        0.83      1.00        214
+
+Written to results/score_gate_real.json
+NOTE: thresholds/references are in-sample (burn-in). Treat absolute false-alarm rates as optimistic; the comparisons between rows are the point.

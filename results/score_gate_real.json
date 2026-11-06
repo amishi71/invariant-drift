@@ -1,0 +1,129 @@
+{
+  "results": {
+    "real JetHT, drop_fraction=0.4": {
+      "n_trials": 30,
+      "gate": {
+        "threshold_quantile": 0.99,
+        "flag_rate_pre_mean": 0.011133333333333332,
+        "flag_rate_post_mean": 0.012506666666666668,
+        "frac_trials_post_flag_rate_higher": 0.6666666666666666,
+        "mean_residual_shift_sigma": -0.11348673805533888
+      },
+      "detectors": {
+        "CUSUM up-only, residual (high-score-gate analogue)": {
+          "pre_onset_alarm": {
+            "rate": 0.16666666666666666,
+            "ci95": [
+              0.07336434240351683,
+              0.33564705185680177
+            ]
+          },
+          "single_shot_miss": {
+            "rate": 0.9333333333333333,
+            "ci95": [
+              0.7867618227892791,
+              0.9815233646723066
+            ]
+          },
+          "fresh_detect": {
+            "rate": 0.1,
+            "ci95": [
+              0.03459925995971615,
+              0.25621441315266624
+            ]
+          },
+          "fresh_delay_mean": 1361.0,
+          "fresh_delay_median": 1122.0
+        },
+        "CUSUM two-sided, residual (default k=0.5,h=8)": {
+          "pre_onset_alarm": {
+            "rate": 0.3,
+            "ci95": [
+              0.16664562643958933,
+              0.4787612101166018
+            ]
+          },
+          "single_shot_miss": {
+            "rate": 0.4666666666666667,
+            "ci95": [
+              0.30232127224128236,
+              0.6385798671847496
+            ]
+          },
+          "fresh_detect": {
+            "rate": 0.6333333333333333,
+            "ci95": [
+              0.45513246433604937,
+              0.7812629779598231
+            ]
+          },
+          "fresh_delay_mean": 941.7894736842105,
+          "fresh_delay_median": 936.0
+        },
+        "CUSUM two-sided, raw log-score (no regression)": {
+          "pre_onset_alarm": {
+            "rate": 0.6333333333333333,
+            "ci95": [
+              0.45513246433604937,
+              0.7812629779598231
+            ]
+          },
+          "single_shot_miss": {
+            "rate": 0.7,
+            "ci95": [
+              0.5212387898833981,
+              0.8333543735604105
+            ]
+          },
+          "fresh_detect": {
+            "rate": 0.8333333333333334,
+            "ci95": [
+              0.6643529481431982,
+              0.9266356575964831
+            ]
+          },
+          "fresh_delay_mean": 762.32,
+          "fresh_delay_median": 532.0
+        },
+        "CUSUM down-only, residual (oracle direction k=0.1,h=16)": {
+          "pre_onset_alarm": {
+            "rate": 0.8333333333333334,
+            "ci95": [
+              0.6643529481431982,
+              0.9266356575964831
+            ]
+          },
+          "single_shot_miss": {
+            "rate": 0.8333333333333334,
+            "ci95": [
+              0.6643529481431982,
+              0.9266356575964831
+            ]
+          },
+          "fresh_detect": {
+            "rate": 1.0,
+            "ci95": [
+              0.8864829086095221,
+              1.0
+            ]
+          },
+          "fresh_delay_mean": 316.6666666666667,
+          "fresh_delay_median": 214.5
+        }
+      }
+    }
+  },
+  "config": {
+    "source": "real",
+    "drop_fractions": [
+      0.4
+    ],
+    "n_trials": 30,
+    "n_events": 5000,
+    "n_burn_in": 20000,
+    "vae_epochs": 40,
+    "seed": 0,
+    "gate_quantile": 0.99,
+    "out": "results/score_gate_real.json"
+  }
+}

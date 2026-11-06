@@ -1,0 +1,24 @@
+[1/7] Burn-in: 3000 stable events, training proxy VAE (40 epochs)...
+      VAE final training loss: 4.3329
+      Burn-in residual: mean=-0.000 std=1.000 (target ~0, ~1)
+
+=== synthetic, drop_fraction=0.15  (n_trials=50) ===
+  mean residual shift after onset: -0.064 sigma
+  one-sided score gate (q=0.99): flag rate 0.0094 before -> 0.0086 after onset; post > pre in 36% of trials
+  detector                                                   pre-alarm 1-shot miss fresh det delay(med)
+  CUSUM up-only, residual (high-score-gate analogue)              0.12        0.98      0.02         68
+  CUSUM two-sided, residual (default k=0.5,h=8)                   0.24        0.90      0.14       1167
+  CUSUM two-sided, raw log-score (no regression)                  0.22        0.90      0.14       1167
+  CUSUM down-only, residual (oracle direction k=0.1,h=16)         0.46        0.56      0.80        576
+
+=== synthetic, drop_fraction=0.4  (n_trials=50) ===
+  mean residual shift after onset: -0.108 sigma
+  one-sided score gate (q=0.99): flag rate 0.0094 before -> 0.0094 after onset; post > pre in 46% of trials
+  detector                                                   pre-alarm 1-shot miss fresh det delay(med)
+  CUSUM up-only, residual (high-score-gate analogue)              0.12        0.98      0.02       2491
+  CUSUM two-sided, residual (default k=0.5,h=8)                   0.24        0.70      0.36        963
+  CUSUM two-sided, raw log-score (no regression)                  0.22        0.62      0.46       1167
+  CUSUM down-only, residual (oracle direction k=0.1,h=16)         0.46        0.50      0.94        389
+
+Written to results/score_gate_synthetic.json
+NOTE: thresholds/references are in-sample (burn-in). Treat absolute false-alarm rates as optimistic; the comparisons between rows are the point.

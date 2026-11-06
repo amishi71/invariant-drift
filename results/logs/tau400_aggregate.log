@@ -1,0 +1,23 @@
+Aggregating 6 seed(s): ['results/real_seeds_tau400/seed0.json', 'results/real_seeds_tau400/seed1.json', 'results/real_seeds_tau400/seed2.json', 'results/real_seeds_tau400/seed3.json', 'results/real_seeds_tau400/seed4.json', 'results/real_seeds_tau400/seed5.json']
+
+=== Real-data ARL check (no injection) ===
+  ARL:        2991.5 +/- 695.2  (n=6, values=[2624.8, 4065.0, 3532.6, 3256.4, 2464.7, 2005.2])
+  FA_rate:    66.7% +/- 19.7%  (n=6, values=[0.6, 0.4, 0.5, 0.7, 0.8, 1.0])
+
+=== Masked-channel (real+injected) ===
+  CUSUM (default, two-sided)
+    miss_rate:     70.0% +/- 16.3%  (n=6, values=[0.8, 0.7, 0.9, 0.8, 0.4, 0.6])
+    latency_mean:  903.8 +/- 362.6  (n=6, values=[613.5, 421.0, 669.0, 1429.0, 1255.1666666666667, 1035.0])
+  CUSUM (one-sided, masked-channel-tuned)
+    miss_rate:     53.3% +/- 12.5%  (n=6, values=[0.7, 0.5, 0.6, 0.3, 0.5, 0.6])
+    latency_mean:  710.9 +/- 361.6  (n=6, values=[912.0, 829.8, 1343.5, 294.42857142857144, 522.2, 363.75])
+
+=== Radiation-damage (real+injected) ===
+  CUSUM
+    miss_rate:     0.0% +/- 0.0%  (n=6, values=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    latency_mean:  612.9 +/- 99.1  (n=6, values=[546.9, 619.3, 497.2, 814.1, 613.4, 586.7])
+  BOCPD
+    miss_rate:     28.3% +/- 25.4%  (n=6, values=[0.0, 0.6, 0.1, 0.5, 0.5, 0.0])
+    latency_mean:  1904.0 +/- 787.9  (n=6, values=[1649.2, 2598.75, 2510.8888888888887, 2723.0, 525.4, 1416.6])
+
+Written to results/real_data_sweep_aggregated.json

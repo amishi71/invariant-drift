@@ -41,31 +41,38 @@ the true onset (event 2500 for masked-channel) counts as a miss, so these
 figures include pre-onset false alarms. Radiation-damage rows use
 `tau_damage=3000` (onset at event ~153); the synthetic radiation-damage
 figures quoted elsewhere use `tau_damage=400` (onset at event ~20) and are
-not like-for-like. A real run at `tau_damage=400` is pending.
+not like-for-like; see the `tau_damage=400` real run below.
 
 **What holds up on real data:** the masked-channel failure mode (default
 CUSUM missing most injections) and its partial fix (one-sided CUSUM) both
 reproduce in the same direction and roughly the same magnitude as the
 synthetic runs (67-93% synthetic vs. 70.0% ± 16.3% real for the default
 detector; both at `drop_fraction=0.4`). The radiation-damage story holds too — CUSUM is far more
-reliable than BOCPD on this drift type in both substrates in direction
-(10.0% vs. 38.3% real miss rate at `tau_damage=3000`; 0.000 vs. 0.587
-synthetic at `tau_damage=400` -- different drift speeds, so compare the
-direction, not the magnitudes).
+reliable than BOCPD on this drift type in both substrates (real: 0.0% vs.
+28.3% at `tau_damage=400`, 10.0% vs. 38.3% at `tau_damage=3000`;
+synthetic: 0.000 vs. 0.587 at `tau_damage=400`). The ordering holds in all
+three, but BOCPD's real miss rate is highly seed-dependent (0-60% across
+VAE seeds), so its magnitude is not stable.
 
-**What may not transfer:** the false-alarm rate under the default
+**What does not transfer:** the false-alarm rate under the default
 (k=0.5, h=8.0) settings on real background is 66.7% ± 19.7% over
-5000-event windows. The earlier comparison figure ("roughly 17-33% in the
-synthetic sweep") came from 2000-event windows with n=6 trials and is not
-comparable. For ideal i.i.d. Gaussian residuals, the false-alarm
-probability at k=0.5, h=8 is about 41% over 5000 events and about 19% over
-2000 (Monte Carlo, 20,000 trials; Siegmund's approximation gives a
-two-sided ARL0 of roughly 9,600 events). So the real-data excess over the
-Gaussian expectation is roughly 1.3-1.6x, not the 2-4x the earlier
-comparison implied. The synthetic pipeline's own false-alarm rate at
-5000-event windows has not been measured yet -- run
-`scripts/synthetic_far_windows.py`. See below for retuning and for what
-the residual diagnostics do and do not show.
+5000-event windows (53.8% across seeds 0-3 in the 20-window retune run).
+The earlier comparison figure ("roughly 17-33% in the synthetic sweep")
+came from 2000-event windows with n=6 trials and is not comparable. At
+matched window length, with 300 fresh windows
+(`scripts/synthetic_far_windows.py`, seed 0, 3000-event in-sample
+reference), the synthetic pipeline gives 28.7% (95% CI 23.8-34.0%) over
+5000 events and 11.7% (8.5-15.8%) over 2000. Ideal i.i.d. Gaussian
+residuals give 40.8% and 18.6% (Monte Carlo, 20,000 trials; Siegmund's
+approximation gives a two-sided ARL0 of roughly 9,600 events). So at
+matched window length the real-data rate is roughly 1.9-2.3x the
+synthetic rate and 1.3-1.6x the ideal-Gaussian rate. The real figures rest
+on only 10-20 windows (the same windows for every VAE seed), so their
+uncertainty is wide (6/10 windows: 95% CI 31-83%). The synthetic rate sits
+*below* the Gaussian ideal because its held-out residuals have mean +0.066
+but std 0.977; the corresponding held-out statistics on real windows have
+not been measured. See below for retuning and for what the residual
+diagnostics do and do not show.
 
 ## CUSUM (k, h) retune
 
@@ -119,7 +126,87 @@ small held-out residual offset (e.g. mean +0.1, or std x1.05) would by
 itself reproduce the observed rates at h=8, 10 and 11 (simulation), so the
 next step is to measure held-out per-window residual mean/std before
 choosing a fix (empirical-threshold calibration, robust scaling, or a
-three-way burn-in split).
+three-way burn-in split). Note that an offset alone does not imply
+inflation: on the synthetic pipeline the held-out mean offset is real
+(+0.066, consistent across 300 windows) but is outweighed by a std below 1
+(0.977), giving a net false-alarm rate below the Gaussian ideal.
+
+## Masked-channel: one-sided score gate vs. residual detectors
+
+`scripts/score_gate_baseline.py` splits each trial (changepoint at event
+2500 of 5000) into an alarm *before* onset (false alarm) and detection
+*after* onset by a detector restarted at the onset ("fresh"; delay from
+onset). The single-shot miss rate used elsewhere lumps the two together.
+Thresholds and detector references come from the burn-in sample, which is
+in-sample for the VAE and regression, so absolute false-alarm rates are
+optimistic. The pre-onset alarm rate is the null rate (an alarm within 2500
+events with no drift) against which post-onset detection should be read.
+P-values below are unpaired Fisher tests, approximate.
+
+Rows show pre-onset alarm rate / post-onset detection rate (median delay
+in events). Synthetic: 50 trials, 3000-event burn-in, one VAE seed.
+
+| Detector                                              | drop 0.15            | drop 0.4             |
+| ----------------------------------------------------- | -------------------- | -------------------- |
+| CUSUM up-only on residual (analogue of a high-score gate) | 0.12 / 0.02 (68)  | 0.12 / 0.02 (2491)   |
+| CUSUM two-sided on residual (k=0.5, h=8)              | 0.24 / 0.14 (1167)   | 0.24 / 0.36 (963)    |
+| CUSUM two-sided on raw log-score (no regression)      | 0.22 / 0.14 (1167)   | 0.22 / 0.46 (1167)   |
+| CUSUM down-only on residual, oracle direction (k=0.1, h=16) | 0.46 / 0.80 (576) | 0.46 / 0.94 (389)  |
+
+Event-level gate (flag if score > 99th percentile of burn-in scores): flag
+rate 0.0094 -> 0.0086 (drop 0.15) and 0.0094 -> 0.0094 (drop 0.4). Mean
+residual shift after onset: -0.064 sigma and -0.108 sigma.
+
+Real JetHT: 30 random disjoint segments, 20,000-event burn-in, one VAE
+seed, drop 0.4.
+
+| Detector                                              | pre-alarm / detect (delay) |
+| ----------------------------------------------------- | -------------------------- |
+| CUSUM up-only on residual                             | 0.17 / 0.10 (1122)         |
+| CUSUM two-sided on residual (k=0.5, h=8)              | 0.30 / 0.63 (936)          |
+| CUSUM two-sided on raw log-score (no regression)      | 0.63 / 0.83 (532)          |
+| CUSUM down-only on residual, oracle direction (k=0.1, h=16) | 0.83 / 1.00 (214)    |
+
+Event-level gate: flag rate 0.0111 -> 0.0125; mean residual shift -0.113 sigma.
+
+Reading these:
+
+- **A one-sided score gate cannot alert on this failure.** Synthetic
+  post-onset flag rate is unchanged or lower, and the up-only CUSUM's
+  post-onset alarm rate (2%) is at or below its null rate (12%). On real
+  data the flag rate rises slightly (1.11% -> 1.25%); detecting a change
+  that small would take on the order of 50,000 events per arm.
+- **The default two-sided residual CUSUM does not demonstrably detect it.**
+  Synthetic, drop 0.4: detection 36% (CI 24-50%) vs null 24% (CI 14-37%),
+  p=0.28; drop 0.15: detection 14% is below the null rate. On real data
+  detection (63%) exceeds the null rate (30%), p=0.02, but the null rate is
+  itself high.
+- **Only the small-slack, oracle-direction CUSUM detects reliably**
+  (synthetic 94% vs 46% null, p<1e-6; real 100% vs 83% null, p~0.05), and
+  its pre-onset alarm rate is 46% (synthetic) to 83% (real) per 2500
+  events. At h=16 it is unusable as a standalone monitor. Detectors with
+  different false-alarm rates are not comparable; the next step is
+  matched-FAR calibration on held-out windows.
+- **Does the regression help?** Synthetic (covariates stationary): no
+  evidence (36% vs 46% detection for raw log-score, within noise). Real:
+  the residual's pre-onset false-alarm rate (30%) is about half the raw
+  log-score's (63%), p=0.02, at identical k and h. That is the first
+  evidence that covariate adjustment helps on real data. One VAE seed, 30
+  segments.
+
+## Radiation damage at tau_damage=400 (real)
+
+Real JetHT, `tau_damage=400` (onset at event ~20), six VAE seeds over the
+same ten segments (`scripts/real_data_sweep.py --tau-damage 400`): CUSUM
+miss rate 0.0% ± 0.0% (mean latency 612.9 ± 99.1 events after onset);
+BOCPD 28.3% ± 25.4% (latency 1904 ± 788; per-seed miss rates 0.0, 0.6, 0.1,
+0.5, 0.5, 0.0). Synthetic at the same decay constant: CUSUM 0.0%, BOCPD
+58.7%. The CUSUM-more-reliable ordering holds, but BOCPD's magnitude varies
+widely across VAE seeds. CUSUM's detection at ~600 events comes when the
+gain is down to roughly 20% of nominal (about an 80% loss), a very large
+drift, and the comparison is not matched at a common false-alarm rate: any
+post-onset alarm counts, and CUSUM's real false-alarm rate is 54-67% per
+5000 events.
 
 ## Extraction backend: uproot vs. PyROOT
 

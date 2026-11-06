@@ -1,0 +1,39 @@
+[1/7] Burn-in: 3000 stable events, training proxy VAE (40 epochs)...
+      VAE final training loss: 4.3329
+      Burn-in residual: mean=-0.000 std=1.000 (target ~0, ~1)
+
+[2/7] Component 1: 5 detectors x (ARL/false-alarm + 4 drift scenarios)...
+      Caching residual streams (stable + 4 scenarios)...
+      CUSUM          ARL=  1723.3  FA-rate=0.17  nominal-gradual FA-rate=0.00  misspec-gradual latency=47.0
+      Page-Hinkley   ARL=  1884.3  FA-rate=0.17  nominal-gradual FA-rate=0.00  misspec-gradual latency=759.0
+      BOCPD          ARL=  1739.5  FA-rate=0.33  nominal-gradual FA-rate=0.00  misspec-gradual latency=None
+      ADWIN          ARL=  2000.0  FA-rate=0.00  nominal-gradual FA-rate=0.00  misspec-gradual latency=None
+      KSWIN          ARL=  1701.3  FA-rate=0.33  nominal-gradual FA-rate=0.00  misspec-gradual latency=None
+
+[3/7] Component 2: ACI + online FDR (LORD, SAFFRON) on the misspecified-gradual scenario...
+      ACI empirical miscoverage: 0.0208 (target 0.02)
+      LORD:    18 rejections / 40 windows, FDP=0.000, power=0.6428571428571429
+      SAFFRON: 18 rejections / 40 windows, FDP=0.000, power=0.6428571428571429
+      Detection efficiency -- adaptive recall=0.5578571428571428  vs  fixed recall=0.6014285714285714
+      Detection efficiency -- adaptive FPR=0.0167  vs  fixed FPR=0.0250
+
+[4/7] Space-detector case study: permanent monotonic gain drift (radiation-damage analog) on CUSUM + BOCPD...
+      CUSUM          miss_rate=0.00  latency_mean=929.0
+      BOCPD          miss_rate=1.00  latency_mean=None
+
+[5/7] Masked-channel one-sided CUSUM case study (see 'Known issues' for why the default detector misses this)...
+      CUSUM (default, two-sided)                 miss_rate=0.67  latency_mean=975.0
+      CUSUM (one-sided, masked-channel-tuned)    miss_rate=0.33  latency_mean=444.0
+
+[6/7] Throughput/memory benchmark (all 5 detectors, see src/benchmark.py for the embedded-constraint framing)...
+detector        mean us/event   k events/s   p99 us/event    peak KB
+----------------------------------------------------------------------
+CUSUM                    1.33        750.7           1.67        0.4
+Page-Hinkley             1.60        625.8           1.83        0.4
+BOCPD                  106.38          9.4         172.13       70.3
+ADWIN                    3.61        277.4          23.04        2.1
+KSWIN                  258.30          3.9         349.79        9.5
+
+1M events/s needs <= ~1 us/event. Python timings: not a hardware-feasibility claim.
+
+[7/7] Done in 28.8s. Results written to results/results.json

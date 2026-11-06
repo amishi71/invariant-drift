@@ -1,0 +1,52 @@
+{
+  "real_arl_check": {
+    "arl_mean": 3256.4,
+    "arl_std": 1385.0315664272782,
+    "false_alarm_rate": 0.7,
+    "n_windows": 10,
+    "window_size": 5000
+  },
+  "real_masked_channel": {
+    "CUSUM (default, two-sided)": {
+      "n_trials": 10,
+      "n_missed": 8,
+      "miss_rate": 0.8,
+      "latency_mean": 1429.0,
+      "latency_median": 1429.0
+    },
+    "CUSUM (one-sided, masked-channel-tuned)": {
+      "n_trials": 10,
+      "n_missed": 3,
+      "miss_rate": 0.3,
+      "latency_mean": 294.42857142857144,
+      "latency_median": 178.0
+    }
+  },
+  "real_radiation_damage": {
+    "CUSUM": {
+      "n_trials": 10,
+      "n_missed": 0,
+      "miss_rate": 0.0,
+      "latency_mean": 814.1,
+      "latency_median": 871.0
+    },
+    "BOCPD": {
+      "n_trials": 10,
+      "n_missed": 5,
+      "miss_rate": 0.5,
+      "latency_mean": 2723.0,
+      "latency_median": 2423.0
+    }
+  },
+  "config": {
+    "n_burn_in": 3000,
+    "n_events": 5000,
+    "n_arl_windows": 10,
+    "n_trials": 10,
+    "vae_epochs": 40,
+    "seed": 3,
+    "tau_damage": 400.0,
+    "verbose_vae": false,
+    "out": "results/real_seeds_tau400/seed3.json"
+  }
+}
