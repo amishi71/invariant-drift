@@ -29,7 +29,13 @@ def load_real_feature_pool(
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Loads the cached real feature pool. Returns (features, pileup, n_jet)."""
     data = np.load(cache_path)
-    return data["features"], data["pileup"], data["n_jet"]
+    features = data["features"]
+    if "n_jet" in data.files:
+        n_jet = data["n_jet"]
+    else:
+        # CMS L1T caches (scripts/build_l1_ordered_cache.py): column 0 is the jet count
+        n_jet = features[:, 0].copy()
+    return features, data["pileup"], n_jet
 
 
 def real_segment_stream(
