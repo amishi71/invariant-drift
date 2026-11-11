@@ -28,6 +28,17 @@ source. If the search hits the edge of a grid without reaching
 share the relevant detector file) and rerun rather than trusting an
 edge-of-grid result.
 
+OUT-OF-SAMPLE CHECKS (added): thresholds are searched on the stable "search" windows, so the
+FAR achieved there is in-sample. Each detector's chosen parameter is therefore ALSO run on
+--n-val-windows FRESH stable windows (disjoint seeds) and reported as val_far with a Wilson
+95% interval. CUSUM's reference value k is no longer fixed at 0.5: --cusum-ks are each matched
+to the target FAR (h searched per k) and the k with the lowest mean CENSORED latency on a
+separate set of --n-tune-trials drift trials is selected; its numbers on the (unchanged)
+evaluation trials are reported under "cusum_k". Censored latency counts a missed trial as the
+full remaining stream length, so a detector is not rewarded for missing hard trials. The
+existing "results" entries (CUSUM at k=0.5, Page-Hinkley, ADWIN, KSWIN) keep their search
+windows, evaluation trials and grids, so earlier numbers remain reproducible.
+
 Usage:
     python3 scripts/matched_far_baseline_comparison.py --target-far 0.05
 """
@@ -50,6 +61,7 @@ from src.detectors.page_hinkley import PageHinkleyDetector
 from src.detectors.adwin import ADWINDetector
 from src.detectors.kswin import KSWINDetector
 from src import evaluation
+from src.matched_far import wilson
 
 
 def build_stable_windows(model, scaler, calib, n_windows, window_size, seed_base):
@@ -86,14 +98,18 @@ def build_drift_trials(model, scaler, calib, n_trials, n_events, onset_frac, bia
     return trials
 
 
-def far_at_config(windows, burn_in_residuals, factory):
+def alarm_count(windows, burn_in_residuals, factory):
     n_alarms = 0
     for residuals in windows:
         detector = factory(burn_in_residuals)
         result = evaluation.run_detector_on_residuals(detector, residuals)
         if result.detected:
             n_alarms += 1
-    return n_alarms / len(windows)
+    return n_alarms
+
+
+def far_at_config(windows, burn_in_residuals, factory):
+    return alarm_count(windows, burn_in_residuals, factory) / len(windows)
 
 
 def search_param(factory_builder, param_grid, windows, burn_in_residuals, target_far, name,
@@ -135,17 +151,21 @@ def search_param(factory_builder, param_grid, windows, burn_in_residuals, target
 def eval_on_trials(trials, burn_in_residuals, factory):
     n_missed = 0
     latencies = []
+    censored = []  # missed trial = full remaining stream length (a miss is never "fast")
     for residuals, onset in trials:
         detector = factory(burn_in_residuals)
         r = evaluation.run_detector_on_residuals(detector, residuals, true_onset_event=onset)
         if r.detected and r.latency is not None:
             latencies.append(r.latency)
+            censored.append(r.latency)
         else:
             n_missed += 1
+            censored.append(len(residuals) - onset)
     return {
         "miss_rate": n_missed / len(trials),
         "latency_mean": float(np.mean(latencies)) if latencies else None,
         "latency_std": float(np.std(latencies)) if latencies else None,
+        "latency_censored_mean": float(np.mean(censored)),
     }
 
 
@@ -160,6 +180,11 @@ def main():
     parser.add_argument("--onset-frac", type=float, default=0.3)
     parser.add_argument("--bias-rate", type=float, default=0.5)
     parser.add_argument("--target-far", type=float, default=0.05)
+    parser.add_argument("--n-val-windows", type=int, default=200,
+                        help="fresh stable windows for out-of-sample FAR (0 = skip)")
+    parser.add_argument("--n-tune-trials", type=int, default=50,
+                        help="drift trials used ONLY to choose CUSUM's k (0 = skip the k sweep)")
+    parser.add_argument("--cusum-ks", type=float, nargs="+", default=[0.25, 0.5, 1.0])
     parser.add_argument("--out", type=str, default="results/matched_far_baseline_comparison.json")
     args = parser.parse_args()
 
@@ -182,6 +207,21 @@ def main():
         model, scaler, calib, args.n_trials, args.n_events,
         args.onset_frac, args.bias_rate, seed_base=9000 + args.seed,
     )
+    # Fresh data that no threshold or k is chosen on. Seeds are disjoint from the search windows
+    # (offset +5000 inside this seed's block), from the evaluation trials (9000+) and from each
+    # other across --seed values.
+    val_windows, tune_trials = [], []
+    if args.n_val_windows:
+        assert args.n_val_windows < 5000
+        val_windows = build_stable_windows(
+            model, scaler, calib, args.n_val_windows, args.n_events,
+            seed_base=100000 + 10000 * args.seed + 5000,
+        )
+    if args.n_tune_trials:
+        tune_trials = build_drift_trials(
+            model, scaler, calib, args.n_tune_trials, args.n_events,
+            args.onset_frac, args.bias_rate, seed_base=600000 + 10000 * args.seed,
+        )
 
     detectors = {
         "CUSUM": {
@@ -208,9 +248,9 @@ def main():
 
     print(f"\n[3/3] Tuning each detector to target_far={args.target_far}, then "
           f"measuring latency/miss-rate on the SAME drift scenario...\n")
-    print(f"{'detector':<14} {'tuned_param':>12} {'achieved_FAR':>13} "
+    print(f"{'detector':<14} {'tuned_param':>12} {'achieved_FAR':>13} {'val_FAR':>8} "
           f"{'miss_rate':>10} {'latency_mean':>13} {'latency_std':>12}")
-    print("-" * 80)
+    print("-" * 90)
 
     results = {}
     for name, spec in detectors.items():
@@ -223,12 +263,49 @@ def main():
             lambda ref, p=chosen_param, b=spec["builder"]: b(ref, p),
         )
         results[name] = {"chosen_param": chosen_param, "achieved_far": achieved_far, **eval_result}
+        val_far = float("nan")
+        if val_windows:
+            va = alarm_count(val_windows, burn_in_residuals,
+                             lambda ref, p=chosen_param, b=spec["builder"]: b(ref, p))
+            val_far = va / len(val_windows)
+            results[name].update(val_far=val_far, val_alarms=va, val_n=len(val_windows),
+                                 val_far_ci95=list(wilson(va, len(val_windows))))
         lat_mean = eval_result["latency_mean"]
         lat_std = eval_result["latency_std"]
-        print(f"{name:<14} {chosen_param:12.5g} {achieved_far:13.3f} "
+        print(f"{name:<14} {chosen_param:12.5g} {achieved_far:13.3f} {val_far:8.3f} "
               f"{eval_result['miss_rate']:10.2f} "
               f"{lat_mean if lat_mean is not None else float('nan'):13.1f} "
               f"{lat_std if lat_std is not None else float('nan'):12.1f}")
+
+    cusum_k = None
+    if tune_trials and args.cusum_ks:
+        print(f"\n[CUSUM k] matching h to FAR {args.target_far} for k in {args.cusum_ks}; choosing k on "
+              f"{len(tune_trials)} separate tuning trials (censored latency), reporting on the evaluation trials")
+        sweep = {}
+        for k in args.cusum_ks:
+            builder = lambda ref, h, k=k: CUSUMDetector(ref, k=k, h=h)
+            h, far_s = search_param(builder, np.arange(1.0, 60.0, 0.25), stable_windows,
+                                    burn_in_residuals, args.target_far, f"CUSUM k={k:g}")
+            fac = lambda ref, h=h, b=builder: b(ref, h)
+            tune = eval_on_trials(tune_trials, burn_in_residuals, fac)
+            ev = eval_on_trials(drift_trials, burn_in_residuals, fac)
+            row = {"h": float(h), "achieved_far": far_s, "tune": tune, "eval": ev}
+            if val_windows:
+                va = alarm_count(val_windows, burn_in_residuals, fac)
+                row.update(val_far=va / len(val_windows), val_alarms=va, val_n=len(val_windows),
+                           val_far_ci95=list(wilson(va, len(val_windows))))
+            sweep[f"{k:g}"] = row
+        best = min(sweep, key=lambda kk: sweep[kk]["tune"]["latency_censored_mean"])
+        cusum_k = {"sweep": sweep, "selected_k": float(best),
+                   "selection_rule": "lowest mean censored latency on the separate tuning trials"}
+        print(f"{'k':>6} {'h':>7} {'FAR(search)':>12} {'val_FAR':>8} {'tune cens.lat':>14} "
+              f"{'eval miss':>10} {'eval lat':>9} {'eval cens.lat':>14}")
+        for kk, r in sweep.items():
+            mark = "  <- selected" if kk == best else ""
+            el = r["eval"]["latency_mean"]
+            print(f"{kk:>6} {r['h']:7.2f} {r['achieved_far']:12.3f} {r.get('val_far', float('nan')):8.3f} "
+                  f"{r['tune']['latency_censored_mean']:14.1f} {r['eval']['miss_rate']:10.2f} "
+                  f"{el if el is not None else float('nan'):9.1f} {r['eval']['latency_censored_mean']:14.1f}{mark}")
 
     print(f"\nAll detectors matched to ~{args.target_far} FAR on {args.n_stable_windows} "
           f"stable synthetic windows; latency/miss-rate measured on the same "
@@ -238,7 +315,7 @@ def main():
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     with open(args.out, "w") as f:
-        json.dump({"results": results, "config": vars(args)}, f, indent=2, default=str)
+        json.dump({"results": results, "cusum_k": cusum_k, "config": vars(args)}, f, indent=2, default=str)
     print(f"\nResults written to {args.out}")
 
 

@@ -180,13 +180,13 @@ real. This finding has since reproduced on real data (n=6 seeds; see
 [REAL_DATA_VALIDATION.md](REAL_DATA_VALIDATION.md)).
 ## Matched-FAR baseline comparison (CUSUM vs. Page-Hinkley vs. ADWIN vs. KSWIN)
 
-At matched ~5% false-alarm rate on synthetic gradual-drift data (6 seeds,
-50 trials/seed), ADWIN detects 17% faster than CUSUM (264 vs. 318 mean
-events to detection) while also achieving a lower miss rate (1.3% vs.
-3.7%) -- consistent across every individual seed, not just on average.
-Page-Hinkley tracks CUSUM almost exactly, as expected from their proven
-mathematical equivalence. KSWIN is slowest on both axes; its false-alarm
-match was also the least precise of the four (see caveat in the full
-writeup). Full methodology, a real search-direction bug caught and fixed
-during development, and reproduction commands:
-[docs/BASELINE_COMPARISON.md](BASELINE_COMPARISON.md).
+At a matched ~5% false-alarm rate on synthetic gradual-drift data (6 seeds, 50 trials/seed), CUSUM
+detected slightly faster than ADWIN (318 vs. 343 mean events to detection, ADWIN slower in all 6
+seeds). ADWIN's lower miss rate (2.0% vs. 5.0%) is not established: it is 6 vs. 15 misses out of 300
+trials (Fisher exact p about 0.07). An earlier version of this section reported ADWIN 17% faster; that
+did not survive a rerun after a seed-overlap bug was fixed. Page-Hinkley tracks CUSUM almost exactly, as
+expected from their mathematical equivalence. KSWIN is slowest and was evaluated at a stricter
+false-alarm rate. The false-alarm match is in-sample (thresholds searched and measured on the same
+windows) and CUSUM's k was fixed at 0.5; the current script adds fresh-window FAR and tunes k on
+separate trials. Full methodology, a search-direction bug caught during development, and reproduction
+commands: [docs/BASELINE_COMPARISON.md](BASELINE_COMPARISON.md).

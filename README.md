@@ -31,9 +31,12 @@ predicted, and that gap has been narrowed and diagnosed but not fully
 closed. Full breakdown, tables, and root-cause analysis:
 **[docs/REAL_DATA_VALIDATION.md](docs/REAL_DATA_VALIDATION.md)**.
 
-At a matched false-alarm rate, ADWIN detects drift 17% faster than CUSUM
-while also missing fewer events (6-seed synthetic comparison against
-Page-Hinkley/ADWIN/KSWIN):
+At a matched ~5% false-alarm rate on synthetic gradual drift (6 seeds), CUSUM
+detected no slower than ADWIN (318 vs. 343 events; ADWIN slower in every seed).
+ADWIN's lower miss rate (2.0% vs. 5.0%) is not statistically established, and
+the false-alarm matching is in-sample. An earlier "ADWIN 17% faster" claim was
+retracted after a seed-overlap bug was fixed. Details, caveats and the
+out-of-sample version of this comparison:
 **[docs/BASELINE_COMPARISON.md](docs/BASELINE_COMPARISON.md)**.
 
 ## Quickstart
@@ -93,7 +96,7 @@ docs/
 
 | Check                                                   | Result                                                                              |
 | ------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| ADWIN vs. CUSUM at matched ~5% FAR (synthetic, 6 seeds) | ADWIN 17% faster to detection (264 vs. 318 events), lower miss rate (1.3% vs. 3.7%) |
+| ADWIN vs. CUSUM at matched ~5% FAR (synthetic, 6 seeds, in-sample FAR matching) | CUSUM not slower: 318 vs. 343 events (ADWIN slower in 6/6 seeds); ADWIN's lower miss rate (2.0% vs. 5.0%) not established (Fisher p ≈ 0.07). Earlier 17%-faster claim retracted (seed-overlap bug) |
 | CUSUM vs. BOCPD, radiation-damage drift                 | 0.0% vs. 58.7% miss rate (real + synthetic)                                         |
 | Masked-channel, default CUSUM (real)                    | 70.0% ± 16.3% miss rate                                                             |
 | False-alarm rate, real vs. synthetic                    | 66.7% vs. ~17-33% — narrowed via retune, not fully closed                           |
