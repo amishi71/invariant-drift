@@ -33,7 +33,7 @@ FAR achieved there is in-sample. Each detector's chosen parameter is therefore A
 --n-val-windows FRESH stable windows (disjoint seeds) and reported as val_far with a Wilson
 95% interval. CUSUM's reference value k is no longer fixed at 0.5: --cusum-ks are each matched
 to the target FAR (h searched per k) and the k with the lowest mean CENSORED latency on a
-separate set of --n-tune-trials drift trials is selected; its numbers on the (unchanged)
+separate set of --n-tune-trials drift trials is selected; its numbers on the
 evaluation trials are reported under "cusum_k". Censored latency counts a missed trial as the
 full remaining stream length, so a detector is not rewarded for missing hard trials. The
 existing "results" entries (CUSUM at k=0.5, Page-Hinkley, ADWIN, KSWIN) keep their search

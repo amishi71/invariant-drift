@@ -48,6 +48,9 @@ Usage:
     python3 scripts/matched_far_heldout.py --include-adwin
     python3 scripts/matched_far_heldout.py --aggregate-only --seeds 0 1 2
 
+Choose k on separate tuning windows (adds a 'k selected on tuning' table):
+    python3 scripts/matched_far_heldout.py --n-tune 200 --out-dir results/matched_far_heldout_tuned
+
 Covariate-model experiment (one --out-dir per design so results never mix):
     python3 scripts/matched_far_heldout.py --design pu_spline --modes insample three_way span \\
         --out-dir results/matched_far_heldout_pu_spline
@@ -96,7 +99,7 @@ def score_windows(sc, fw, pw, jw):
             "logscore": np.log(np.clip(scores.reshape(n, T), 1e-12, None))}
 
 
-def make_record(mode, family, k, target, params, fp, T, scen_names, extra=None):
+def make_record(mode, family, k, target, params, fp, T, scen_names, extra=None, tune_names=()):
     j, far_cal = calibrate_param(fp["cal"], T, target)
     rec = {"mode": mode, "family": family, "k": k, "target": target}
     if extra:
@@ -109,8 +112,12 @@ def make_record(mode, family, k, target, params, fp, T, scen_names, extra=None):
     for name in scen_names:
         d, nn, delays = outcome_counts(fp[name], j, T)
         scen[name] = {"detect": d, "n": nn, "delays": delays}
+    tune = {}
+    for name in tune_names:  # separate drift-injected windows used ONLY to choose k
+        d, nn, _ = outcome_counts(fp["tune:" + name], j, T)
+        tune[name] = {"detect": d, "n": nn}
     rec.update(param=float(params[j]), cal_far=float(far_cal[j]),
-               val_alarms=a, val_n=n, scenarios=scen)
+               val_alarms=a, val_n=n, scenarios=scen, tune=tune)
     return rec
 
 
@@ -121,14 +128,17 @@ def run_seed(pool, seed, args):
     reserve = reserved_events(args.n_vae, args.n_reg, args.n_ref)
     n_slots = (len(F) - reserve) // T
     need = args.n_cal + args.n_val + args.n_eval
-    if n_slots < need:
+    if n_slots < need + args.n_tune:
         raise SystemExit(
             f"Region has {n_slots} usable {T}-event slots but {need} are needed "
-            f"(n_cal+n_val+n_eval). Reduce those, reduce --n-regions, or use a larger pool.")
+            f"(n_cal+n_val+n_eval+n_tune). Reduce those, reduce --n-regions, or use a larger pool.")
     rng = np.random.default_rng(1000 + seed)
     perm = rng.permutation(n_slots)           # same draw as before: windows are unchanged
     starts = reserve + perm[:need] * T
-    free_slots = perm[need:]                  # slots in NO window: source for mode "span"
+    # Tuning windows (--n-tune) take the next slots of the SAME permutation, so cal/val/eval
+    # windows are identical to runs without tuning; they never overlap any other window.
+    tune_s = reserve + perm[need:need + args.n_tune] * T
+    free_slots = perm[need + args.n_tune:]    # slots in NO window: source for mode "span"
     cal_s, val_s, eval_s = (starts[:args.n_cal], starts[args.n_cal:args.n_cal + args.n_val],
                             starts[args.n_cal + args.n_val:])
     win = {name: (take_windows(F, s, T), take_windows(P, s, T), take_windows(J, s, T))
@@ -136,6 +146,9 @@ def run_seed(pool, seed, args):
 
     scen = scenario_list(args)
     scen_names = [s[0] for s in scen]
+    tune_names = scen_names if args.n_tune > 0 else []
+    if args.n_tune > 0:
+        win["tune"] = (take_windows(F, tune_s, T), take_windows(P, tune_s, T), take_windows(J, tune_s, T))
     h_grid = np.arange(args.h_min, args.h_max + 1e-9, args.h_step)
     records, mode_info = [], {}
 
@@ -162,6 +175,11 @@ def run_seed(pool, seed, args):
         for name, kind, val in scen:
             inj = inject_masked(ef, val) if kind == "masked" else inject_radiation(ef, val)
             series[name] = score_windows(sc, inj, ep, ej)
+        if args.n_tune > 0:
+            tf, tp, tj = win["tune"]
+            for name, kind, val in scen:
+                inj = inject_masked(tf, val) if kind == "masked" else inject_radiation(tf, val)
+                series["tune:" + name] = score_windows(sc, inj, tp, tj)
         ref = {"resid": sc.ref_residuals, "logscore": sc.ref_logscores}
         ref_sd = float(sc.ref_residuals.std())
         v = series["val"]["resid"]
@@ -181,7 +199,8 @@ def run_seed(pool, seed, args):
                 z = {s: zscore(series[s][ser], ref[ser]) for s in series}
                 fp = {s: first_passage(cusum_runmax(z[s], k, md), h_grid) for s in series}
                 for target in args.targets:
-                    records.append(make_record(mode, family, k, target, h_grid, fp, T, scen_names))
+                    records.append(make_record(mode, family, k, target, h_grid, fp, T, scen_names,
+                                               tune_names=tune_names))
 
         # --- ADWIN (optional) -------------------------------------------------
         if args.include_adwin:
@@ -205,7 +224,7 @@ def run_seed(pool, seed, args):
 
     print(f"  [seed {seed}] done in {time.time() - t0:.0f}s", flush=True)
     return {"seed": seed, "region": seed % args.n_regions, "source": pool.name,
-            "n_windows": {"cal": args.n_cal, "val": args.n_val, "eval": args.n_eval},
+            "n_windows": {"cal": args.n_cal, "val": args.n_val, "eval": args.n_eval, "tune": args.n_tune},
             "scenarios": scen_names, "mode_info": mode_info, "records": records,
             "config": vars(args)}
 
@@ -222,7 +241,9 @@ def fmt_rate(k, n):
 
 def aggregate(seed_files):
     agg = defaultdict(lambda: {"val_alarms": 0, "val_n": 0, "per_seed_far": [], "params": [],
-                               "unachievable": 0, "n_seeds": 0, "scen": defaultdict(
+                               "unachievable": 0, "n_seeds": 0,
+                               "tune": defaultdict(lambda: {"detect": 0, "n": 0}),
+                               "scen": defaultdict(
                                    lambda: {"detect": 0, "n": 0, "delays": [], "per_seed": []})})
     modeinfo = defaultdict(list)
     scen_names = None
@@ -242,6 +263,9 @@ def aggregate(seed_files):
             a["val_alarms"] += r["val_alarms"]
             a["val_n"] += r["val_n"]
             a["per_seed_far"].append(r["val_alarms"] / r["val_n"])
+            for name, t in (r.get("tune") or {}).items():
+                a["tune"][name]["detect"] += t["detect"]
+                a["tune"][name]["n"] += t["n"]
             for name, s in r["scenarios"].items():
                 b = a["scen"][name]
                 b["detect"] += s["detect"]
@@ -300,6 +324,39 @@ def print_report(agg, modeinfo, scen_names, args):
           "detection interval overlaps its own false-alarm rate (the null) has not been shown to detect.")
 
 
+def print_selected_k(agg, modeinfo, scen_names, args):
+    """One k per (mode, detector family), chosen on the TUNING windows only (mean detection
+    over scenarios, pooled over seeds), then reported on the EVALUATION windows. The 'best k on
+    evaluation' column shows how much the old, visible-selection reading would have flattered."""
+    pt = args.print_target
+    print("\n" + "=" * 100)
+    print(f"k SELECTED ON SEPARATE TUNING WINDOWS, REPORTED ON EVALUATION WINDOWS "
+          f"(target FAR {pt:g}, window {args.window}, {args.n_tune} tuning windows per seed)")
+    print(f"{'detector':<52}{'mode':<10}{'k(tune)':>8}{'tune mean':>10}"
+          + "".join(f"{s:>22}" for s in scen_names) + f"{'eval mean':>10}{'best-k eval mean':>18}")
+    fams = sorted({(k[1]) for k in agg if k[1].startswith("CUSUM")})
+    for fam in fams:
+        for mode in modeinfo:
+            cands = []
+            for (m, f, k, t), a in agg.items():
+                if (m, f, t) != (mode, fam, pt) or k is None or a["val_n"] == 0 or a["unachievable"]:
+                    continue
+                if not a["tune"] or any(a["tune"][s]["n"] == 0 for s in scen_names):
+                    continue
+                tune_mean = np.mean([a["tune"][s]["detect"] / a["tune"][s]["n"] for s in scen_names])
+                eval_mean = np.mean([a["scen"][s]["detect"] / a["scen"][s]["n"] for s in scen_names])
+                cands.append((tune_mean, -k, k, eval_mean, a))
+            if not cands:
+                print(f"{fam:<52}{mode:<10}{'n/a (calibration unachievable for every k)':>60}")
+                continue
+            tm, _, k_sel, em, a = max(cands, key=lambda c: (c[0], c[1]))
+            cells = "".join(f"{fmt_rate(a['scen'][s]['detect'], a['scen'][s]['n']):>22}" for s in scen_names)
+            best_eval = max(c[3] for c in cands)
+            print(f"{fam:<52}{mode:<10}{k_sel:>8g}{100*tm:>9.0f}%{cells}{100*em:>9.0f}%{100*best_eval:>17.0f}%")
+    print("\nThe 'eval mean' column is the honest headline. If 'best-k eval mean' is much higher, the "
+          "per-k table above would have overstated power by picking k on the evaluation windows.")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--source", choices=["real", "synthetic"], default="real")
@@ -319,6 +376,9 @@ def main():
     p.add_argument("--n-cal", type=int, default=300)
     p.add_argument("--n-val", type=int, default=300)
     p.add_argument("--n-eval", type=int, default=200)
+    p.add_argument("--n-tune", type=int, default=0,
+                   help="drift-injected tuning windows per seed, used only to choose k (0 = off). "
+                        "Taken from slots no other window uses; cal/val/eval are unchanged.")
     p.add_argument("--vae-epochs", type=int, default=40)
     p.add_argument("--k-values", type=float, nargs="+", default=[0.1, 0.25, 0.5])
     p.add_argument("--targets", type=float, nargs="+", default=[0.02, 0.05, 0.10])
@@ -366,6 +426,8 @@ def main():
     agg, modeinfo, scen_names = aggregate(files)
     print(f"\nAggregating {len(files)} seed file(s) from {args.out_dir}")
     print_report(agg, modeinfo, scen_names, args)
+    if any(a["tune"] for a in agg.values()):
+        print_selected_k(agg, modeinfo, scen_names, args)
 
 
 if __name__ == "__main__":
