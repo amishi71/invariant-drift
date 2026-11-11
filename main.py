@@ -12,8 +12,9 @@ Pipeline:
      ADWIN, KSWIN) -- Average Run Length + false-alarm rate on a stable
      stream, and detection latency on nominal-gradual / misspecified-
      gradual / masked-channel-abrupt / multiplicity-step-abrupt streams.
-  3. Component 2: adaptive conformal threshold (ACI) fed by Zero-Bias-
-     style control feedback + a simulated delayed-offline-validation
+  3. Component 2: adaptive conformal threshold (ACI) fed by simulated
+     control-stream feedback (zero-bias-style, synthetic only) + a simulated
+     delayed-offline-validation
      channel; online FDR control (LORD, SAFFRON) over windowed batches of
      the resulting flags; detection efficiency vs. a frozen fixed-
      threshold baseline.
@@ -239,8 +240,9 @@ def run_component_2(model, scaler, calib, burn_in_scores, n_events, seed):
         s, lab = float(scores[i]), int(labels[i])
         adaptive_flags[i] = aci.decide(s)
         if lab == 0:
-            # This event is Zero-Bias control (confirmed background by
-            # construction of the synthetic label) -- live feedback.
+            # This event is simulated control-stream background (confirmed
+            # by construction of the synthetic label; stands in for
+            # zero-bias control) -- live feedback.
             aci.update(s)
         # Simulated delayed offline validation: re-confirm an
         # older event's background status `delayed_lag` events later,

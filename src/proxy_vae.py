@@ -13,11 +13,17 @@ src/detectors, src/residual.py, src/conformal) is what's actually being
 evaluated, and it is agnostic to which upstream anomaly-score model
 produces the scalar it watches.
 
-Trained on background-only ("Zero-Bias control") events only, same
-convention as CICADA/AXOL1TL themselves and as the calibration burn-in
-used everywhere else in this project: the model should reconstruct nominal
-events well and nominal-but-different-conditions events less well, and the
-reconstruction error is the anomaly score fed into residual.py.
+Trained on a background-only burn-in sample. The real AXOL1TL is trained
+on zero-bias data; this project has no zero-bias sample. The burn-in here
+is either synthetic background (main.py) or the first N events of a CMS
+Open Data JetHT sample (real-data runs). JetHT is a prescaled,
+jet-trigger-selected stream, NOT zero-bias, so it stands in for background
+rather than matching what AXOL1TL sees. The model should reconstruct
+nominal events well and nominal-but-different-conditions events less well,
+and the reconstruction error is the anomaly score fed into residual.py.
+
+Nothing in this project is the deployed AXOL1TL or CICADA, nor their L1
+trigger-object inputs or their scores.
 """
 
 from dataclasses import dataclass
@@ -125,7 +131,8 @@ def train_proxy_vae(
     verbose: bool = False,
 ):
     """Fits the scaler and trains the VAE on burn-in background-only
-    (Zero-Bias-like) object features. Returns (model, scaler, history).
+    object features (synthetic, or JetHT for real-data runs; not zero-bias).
+    Returns (model, scaler, history).
     """
     torch.manual_seed(seed)
     rng = np.random.RandomState(seed)

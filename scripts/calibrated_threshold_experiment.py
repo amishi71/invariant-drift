@@ -110,8 +110,8 @@ def main():
 
     print(f"\n[3/3] Calibrating h for target FAR in {args.target_far} "
           f"(k={args.k} fixed)...\n")
-    print(f"{'target_far':>11} {'chosen_h':>9} {'measured_FAR':>13} "
-          f"{'masked_miss':>12} {'rad_miss':>10}")
+    print(f"{'target_far':>11} {'chosen_h':>9} {'bootstrap_FAR(in-sample)':>25} "
+          f"{'heldout_FAR':>12} {'masked_miss':>12} {'rad_miss':>10}")
 
     results = []
     for target_far in args.target_far:
@@ -138,7 +138,8 @@ def main():
             "radiation_damage_miss_rate": rad_result["miss_rate"],
         }
         results.append(row)
-        print(f"{target_far:11.2f} {detector.h:9.2f} {measured_far:13.3f} "
+        print(f"{target_far:11.2f} {detector.h:9.2f} {measured_far:25.3f} "
+              f"{arl_result['false_alarm_rate']:12.3f} "
               f"{masked_result['miss_rate']:12.2f} {rad_result['miss_rate']:10.2f}")
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)

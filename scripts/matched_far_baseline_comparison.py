@@ -171,8 +171,12 @@ def main():
     print(f"\n[2/3] Building {args.n_stable_windows} stable windows (FAR search) "
           f"and {args.n_trials} drift trials (misspecified_gradual, matches "
           f"Component 2's existing scenario)...")
+    # Seeds are spaced 10000 apart per --seed so different seeds never share streams
+    # (the former `5000 + seed` made seeds 0 and 1 share 99 of 100 stable windows).
+    assert args.n_stable_windows < 10000
     stable_windows = build_stable_windows(
-        model, scaler, calib, args.n_stable_windows, args.n_events, seed_base=5000 + args.seed,
+        model, scaler, calib, args.n_stable_windows, args.n_events,
+        seed_base=100000 + 10000 * args.seed,
     )
     drift_trials = build_drift_trials(
         model, scaler, calib, args.n_trials, args.n_events,

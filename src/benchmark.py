@@ -1,33 +1,40 @@
 """Per-event throughput/latency and memory footprint for each detector.
 
 Exists because the abstract makes a specific, previously-unmeasured claim:
-"triggers process millions of events per second." A detector that's
-statistically excellent but takes 50 microseconds/event is not deployable
-in that regime -- this module puts an actual number against the claim
-instead of leaving it asserted.
+"triggers process millions of events per second." Reading that as a
+detector budget, a million events per second means <= ~1 microsecond per
+event. This module puts an actual number against that bar instead of
+leaving it asserted.
 
-Same number matters to two different embedded-constraint audiences at
-once, which is worth being explicit about rather than framing this as
-HEP-only: an FPGA-based L1 trigger and a radiation-hardened, low-power
-spacecraft flight computer are both hard-constrained on cycles/event and
-memory footprint, for different but structurally similar reasons (L1:
-fixed-latency budget measured in tens of nanoseconds to low microseconds;
-flight computer: strict power/thermal envelope with no serviceable
-hardware). Reporting both wall-clock throughput and peak memory per
-detector instance lets a reader in either context read off what they
-actually need without a second benchmark.
+WHAT THESE NUMBERS ARE (and are not). They are wall-clock timings of
+`update()` + `evaluate_drift()` in Python/NumPy on a general-purpose CPU.
+They include interpreter and library overhead (for example river's
+pure-Python internals, or NumPy call overhead), so they say little about
+the *algorithmic* cost of a detector and nothing about FPGA, ASIC or
+radiation-hardened flight-computer feasibility. The two embedded audiences
+(an FPGA-based L1 trigger with a fixed latency budget; a spacecraft flight
+computer with a strict power envelope) care about cycles/event and memory
+footprint of a hardware implementation, which would be established by
+synthesis or a C/embedded port, not by this benchmark. The defensible
+cross-detector comparison is asymptotic cost (O(1) per event for CUSUM and
+Page-Hinkley; growth with retained run-length hypotheses for BOCPD; a
+two-sample KS test per event for KSWIN), with these timings as an
+order-of-magnitude illustration. Say so wherever the numbers are reported.
 
-This is deliberately NOT a claim about actual FPGA feasibility -- these
-are Python/NumPy timings on a general-purpose CPU, not synthesized HDL
-cycle counts. It answers "which of these detectors is cheap enough to be
-worth prototyping for a hard-real-time target," not "this runs on an
-FPGA." Say so explicitly wherever these numbers are reported.
+MEASUREMENT PROTOCOL. Three separate passes over fresh detector instances
+so that no measurement contaminates another:
+  1. throughput: one timer around the whole loop, no per-event timers and
+     no tracemalloc (tracemalloc slows allocation-heavy code several-fold);
+  2. tail latency: per-event timers (p99). Each sample includes ~0.1-0.3 us
+     of timer overhead, so p99 here is an upper-ish bound, not a pure cost;
+  3. memory: tracemalloc, started after warm-up, peak traced allocation
+     during the streamed loop (transient allocation, not total footprint).
 """
 
 import time
 import tracemalloc
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable
 
 import numpy as np
 
@@ -42,47 +49,61 @@ class ThroughputResult:
     peak_memory_kb: float
 
 
+def _step(detector, r: float) -> None:
+    detector.update(r)
+    if detector.is_ready():
+        detector.evaluate_drift()
+
+
+def _fresh_primed(detector_factory, warm) -> object:
+    """Fresh detector, warmed up on `warm` (allocator/lazy-state warm-up;
+    river's detectors in particular allocate internal state on first use)."""
+    detector = detector_factory()
+    for r in warm:
+        _step(detector, float(r))
+    return detector
+
+
 def benchmark_detector(
     detector_name: str,
     detector_factory: Callable[[], object],
     residuals: np.ndarray,
     n_warmup: int = 100,
 ) -> ThroughputResult:
-    """Times `update()` + `evaluate_drift()` per event for a fresh detector
-    instance streamed over `residuals`. `n_warmup` events are run and
-    discarded before timing starts (JIT/allocator warm-up; river's
-    detectors in particular allocate internal state lazily on first use).
-    """
-    detector = detector_factory()
     residuals = np.asarray(residuals, dtype=np.float64)
+    warm, remaining = residuals[:n_warmup], residuals[n_warmup:]
+    n = len(remaining)
+    stream = [float(r) for r in remaining]  # pre-convert: time the detector, not np->float
 
-    for r in residuals[:n_warmup]:
-        detector.update(float(r))
-        if detector.is_ready():
-            detector.evaluate_drift()
-
-    remaining = residuals[n_warmup:]
-    per_event_sec = np.empty(len(remaining), dtype=np.float64)
-
-    tracemalloc.start()
+    # Pass 1: throughput (single timer, no tracemalloc, no per-event timers).
+    detector = _fresh_primed(detector_factory, warm)
     t_start = time.perf_counter()
-    for idx, r in enumerate(remaining):
-        t0 = time.perf_counter()
-        detector.update(float(r))
-        if detector.is_ready():
-            detector.evaluate_drift()
-        per_event_sec[idx] = time.perf_counter() - t0
+    for r in stream:
+        _step(detector, r)
     total_time = time.perf_counter() - t_start
+
+    # Pass 2: tail latency (per-event timers).
+    detector = _fresh_primed(detector_factory, warm)
+    per_event_sec = np.empty(n, dtype=np.float64)
+    for idx, r in enumerate(stream):
+        t0 = time.perf_counter()
+        _step(detector, r)
+        per_event_sec[idx] = time.perf_counter() - t0
+
+    # Pass 3: memory (tracemalloc started after warm-up).
+    detector = _fresh_primed(detector_factory, warm)
+    tracemalloc.start()
+    for r in stream:
+        _step(detector, r)
     _current, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
 
-    per_event_us = per_event_sec * 1e6
     return ThroughputResult(
         detector_name=detector_name,
-        n_events=len(remaining),
+        n_events=n,
         total_time_sec=total_time,
-        mean_us_per_event=float(np.mean(per_event_us)),
-        p99_us_per_event=float(np.percentile(per_event_us, 99)),
+        mean_us_per_event=total_time / n * 1e6,
+        p99_us_per_event=float(np.percentile(per_event_sec * 1e6, 99)),
         peak_memory_kb=peak / 1024.0,
     )
 
@@ -107,12 +128,16 @@ def benchmark_all(
 
 def format_results(results: "list[ThroughputResult]") -> str:
     lines = [
-        f"{'detector':<14} {'mean us/event':>14} {'p99 us/event':>14} {'peak KB':>10}",
-        "-" * 56,
+        f"{'detector':<14} {'mean us/event':>14} {'k events/s':>12} "
+        f"{'p99 us/event':>14} {'peak KB':>10}",
+        "-" * 70,
     ]
     for r in results:
+        k_eps = 1e3 / r.mean_us_per_event if r.mean_us_per_event > 0 else float("inf")
         lines.append(
-            f"{r.detector_name:<14} {r.mean_us_per_event:>14.2f} "
+            f"{r.detector_name:<14} {r.mean_us_per_event:>14.2f} {k_eps:>12.1f} "
             f"{r.p99_us_per_event:>14.2f} {r.peak_memory_kb:>10.1f}"
         )
+    lines.append("")
+    lines.append("1M events/s needs <= ~1 us/event. Python timings: not a hardware-feasibility claim.")
     return "\n".join(lines)

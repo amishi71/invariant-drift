@@ -45,7 +45,8 @@ class CUSUMDetector:
     genuine tradeoff between mean time-to-false-alarm (under H0) and mean
     detection delay (under H1), rather than accumulating look-elsewhere
     risk with every new evaluation. h must still be tuned empirically
-    against real background (Zero-Bias) data -- see evaluation.py's
+    against real background data (zero-bias for the actual trigger; JetHT
+    segments in this project's real-data runs) -- see evaluation.py's
     average_run_length().
     """
 
@@ -59,6 +60,7 @@ class CUSUMDetector:
         transform: Optional[Callable[[np.ndarray], np.ndarray]] = None,
     ):
         reference_data = np.asarray(reference_data, dtype=np.float64)
+        self._identity_transform = transform is None
         self.transform = transform if transform is not None else (lambda x: x)
         ref = self.transform(reference_data)
         self.mu0 = float(np.mean(ref))
@@ -78,7 +80,12 @@ class CUSUMDetector:
         self.n_events = 0
 
     def update(self, x: float) -> None:
-        z = (float(self.transform(np.array([x]))[0]) - self.mu0) / self.sigma0
+        if self._identity_transform:
+            # Scalar fast path: no per-event NumPy array allocation. Same
+            # arithmetic as the general path below with an identity transform.
+            z = (float(x) - self.mu0) / self.sigma0
+        else:
+            z = (float(self.transform(np.array([x]))[0]) - self.mu0) / self.sigma0
         self.S_pos = max(0.0, self.S_pos + z - self.k)
         if self.two_sided:
             self.S_neg = max(0.0, self.S_neg - z - self.k)

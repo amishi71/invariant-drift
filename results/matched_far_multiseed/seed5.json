@@ -1,29 +1,29 @@
 {
   "results": {
     "CUSUM": {
-      "chosen_param": 10.25,
-      "achieved_far": 0.04,
-      "miss_rate": 0.0,
-      "latency_mean": 344.3,
-      "latency_std": 39.64807687643878
+      "chosen_param": 9.0,
+      "achieved_far": 0.05,
+      "miss_rate": 0.04,
+      "latency_mean": 338.4791666666667,
+      "latency_std": 41.11112460116145
     },
     "Page-Hinkley": {
-      "chosen_param": 10.5,
-      "achieved_far": 0.02,
-      "miss_rate": 0.0,
-      "latency_mean": 345.02,
-      "latency_std": 39.89009400841266
+      "chosen_param": 9.0,
+      "achieved_far": 0.05,
+      "miss_rate": 0.04,
+      "latency_mean": 338.4791666666667,
+      "latency_std": 41.11112460116145
     },
     "ADWIN": {
-      "chosen_param": 0.04421499907374487,
+      "chosen_param": 0.03934927263095849,
       "achieved_far": 0.05,
-      "miss_rate": 0.0,
-      "latency_mean": 293.08,
-      "latency_std": 36.99288580254317
+      "miss_rate": 0.04,
+      "latency_mean": 363.0,
+      "latency_std": 45.077710678338576
     },
     "KSWIN": {
       "chosen_param": 6.105402296585326e-05,
-      "achieved_far": 0.03,
+      "achieved_far": 0.02,
       "miss_rate": 0.0,
       "latency_mean": 480.72,
       "latency_std": 97.4535869016631

@@ -36,6 +36,7 @@ class PageHinkleyDetector:
         transform: Optional[Callable[[np.ndarray], np.ndarray]] = None,
     ):
         reference_data = np.asarray(reference_data, dtype=np.float64)
+        self._identity_transform = transform is None
         self.transform = transform if transform is not None else (lambda x: x)
         ref = self.transform(reference_data)
         self.mu0 = float(np.mean(ref))
@@ -56,7 +57,10 @@ class PageHinkleyDetector:
         self.min_cumulative_sum_neg = 0.0
 
     def update(self, x: float) -> None:
-        z_raw = float(self.transform(np.array([x]))[0])
+        if self._identity_transform:
+            z_raw = float(x)  # scalar fast path, identical to identity transform
+        else:
+            z_raw = float(self.transform(np.array([x]))[0])
         self.n_events += 1
         z = (z_raw - self.mu0) / self.sigma0  # frozen mu0, not a running mean
         self.cumulative_sum += z - self.delta
