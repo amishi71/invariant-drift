@@ -25,7 +25,18 @@ from typing import Callable, Optional, Sequence, Tuple
 
 import numpy as np
 
-AFFECTED_FEATURES = (0, 3, 9, 7)  # jet1_pt, jet2_pt, ht, met_pt (as in abrupt.py)
+AFFECTED_FEATURES_JETHT = (0, 3, 9, 7)  # jet1_pt, jet2_pt, ht, met_pt (as in abrupt.py)
+AFFECTED_FEATURES_L1 = (4, 8, 9)        # lead jet Et, HT, MET (CMS L1T layout, src/feature_extraction_cmsl1t.py)
+AFFECTED_FEATURES = AFFECTED_FEATURES_JETHT
+
+
+def set_affected_features_for_cache(cache_path: str) -> tuple:
+    """L1T caches carry a 'run' array; the JetHT cache does not. Selects the injected columns."""
+    global AFFECTED_FEATURES
+    with np.load(cache_path) as z:
+        is_l1 = "run" in z.files
+    AFFECTED_FEATURES = AFFECTED_FEATURES_L1 if is_l1 else AFFECTED_FEATURES_JETHT
+    return AFFECTED_FEATURES
 
 
 # ----------------------------------------------------------------------------
@@ -202,6 +213,7 @@ class RealPool:
     def __init__(self, cache_path: str = "data/real_cache/jetht_features.npz"):
         from src.drift_sim.real_data_injection import load_real_feature_pool
         self.features, self.pileup, self.n_jet = load_real_feature_pool(cache_path)
+        print("RealPool: injecting drift into feature columns %s" % (set_affected_features_for_cache(cache_path),))
         self.name = "real"
 
     def region(self, idx: int, n_regions: int):
