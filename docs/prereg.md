@@ -46,3 +46,9 @@ Deviations will be logged here with a reason.
   at or near the null FAR (15%: 14%/35% raw k=0.25); only >=25% drops are detected (100% at k=0.25). Residual offset (0.069) is ~2x raw log-score (0.035).
 - Gate 2 (seeds 0-2, default drops): best-statistic d' >= 4.0 at every tested drop, but the residual-mean shift at 10% ranges -0.000 to +0.063
   across VAE seeds: blind-spot location is VAE-dependent. q90 ~20% crossing seen in seed 0 only.
+
+## LS re-baselining experiment (logged 2026-11-12, BEFORE running; exploratory)
+- Policies: fixed reference; reference re-estimated from first n_warm in {1,5,30} healthy LS of the monitored run.
+- Matched FAR: CUSUM (k=0.5 SD) threshold set so healthy P(alarm within 100 LS) = 5%. Detection = P(alarm within 20 LS).
+- A policy "recovers" if detection of a 15% drop >= 80% at matched FAR (some statistic). Absorption (fault present during warm-up) is
+  reported for every policy. Model limits: iid bootstrap of healthy LS, additive-shift faults, sigma from the monitored run.
