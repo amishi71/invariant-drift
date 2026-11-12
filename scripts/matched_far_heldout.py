@@ -175,6 +175,7 @@ def run_seed(pool, seed, args, calib_pool=None):
     T = args.window
     F, P, J = pool.region(seed % args.n_regions, args.n_regions)
     inj_cols = resolve_injection_cols(args.inject_set, None if pool.name == "synthetic" else args.cache_path)
+    print(f"  injection set {args.inject_set!r} -> columns {tuple(inj_cols)}, requantize {args.requantize}", flush=True)
     if calib_pool is not None:
         # Cross-run: VAE, regression and reference come from ANOTHER run; every window comes from this one.
         CF, CP, CJ = calib_pool.region(args.calib_region, args.calib_n_regions)
@@ -435,14 +436,21 @@ def print_selected_k(agg, modeinfo, scen_names, args):
     for fam in fams:
         for mode in modeinfo:
             cands = []
+            dropped = []
             for (m, f, k, t), a in agg.items():
-                if (m, f, t) != (mode, fam, pt) or k is None or a["val_n"] == 0 or a["unachievable"]:
+                if (m, f, t) != (mode, fam, pt) or k is None:
+                    continue
+                if a["val_n"] == 0 or a["unachievable"]:
+                    dropped.append((k, a["unachievable"], a["n_seeds"]))
                     continue
                 if not a["tune"] or any(a["tune"][s]["n"] == 0 for s in scen_names):
                     continue
                 tune_mean = np.mean([a["tune"][s]["detect"] / a["tune"][s]["n"] for s in scen_names])
                 eval_mean = np.mean([a["scen"][s]["detect"] / a["scen"][s]["n"] for s in scen_names])
                 cands.append((tune_mean, -k, k, eval_mean, a))
+            if dropped:
+                print("  [" + fam + " | " + mode + "] k excluded from selection (calibration unachievable on some seed): "
+                      + ", ".join(f"k={kk:g} ({u}/{n} seeds)" for kk, u, n in sorted(dropped)))
             if not cands:
                 print(f"{fam:<52}{mode:<10}{'n/a (calibration unachievable for every k)':>60}")
                 continue

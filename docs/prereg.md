@@ -17,3 +17,12 @@ Harm (if Phase 4 is reached): a fault is harmful if signal efficiency at a thres
  rate changes >20% relative. Signal efficiency is on simulated samples (proxy only).
 No change to faults, magnitudes, FAR or thresholds after results are seen.
 Deviations will be logged here with a reason.
+
+## Deviations and additions (logged 2026-11-12, after event-scale results were seen)
+- k grid for the tail-rate comparison extended to 0.01 and 0.02 after observing that tail shifts are small per event.
+  The first tail run (k >= 0.05) is superseded by results/tail_h400_smallk.
+- Added lumisection-scale stability/detectability (scripts/ls_stability.py) and a harm map (scripts/harm_map.py)
+  after seeing event-scale results. Neither was part of the original comparison.
+- The raw and residual detection numbers for the 15% and 40% drops (cross B->A) were known before this file was committed.
+- The harm criterion is applied as written; its "bandwidth" flag also counts a background-rate DECREASE, which is
+  not a bandwidth problem. Frozen and recalibrated signal efficiencies are reported separately.
