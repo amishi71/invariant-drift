@@ -24,9 +24,9 @@ def _run_to_alarm(detector, stream, max_events=None):
 class TestCUSUM:
     def test_false_alarm_rate_matches_arl_theory_on_pure_noise(self, reference):
         """NOT a zero-tolerance test: with k=0.5, h=10.0, Siegmund's ARL0
-        approximation gives ARL0 ~= 44,000 (one-sided) / ~22,000
+        approximation gives ARL0 ~= 140,000 (one-sided) / ~70,000
         (two-sided), so across 30 trials x 2000 events = 60,000 total
-        test-events, ~2-3 false alarms are EXPECTED by chance, not a bug.
+        test-events, ~1 false alarm is EXPECTED by chance, not a bug.
         Asserting a hard zero across a handful of trials is a statistical
         test-design error (caught during development -- see README's
         "Known issues" section); the correct check is that the empirical
@@ -42,11 +42,11 @@ class TestCUSUM:
             stream = rng.normal(0, 1, n_events)
             if _run_to_alarm(d, stream) is not None:
                 n_alarms += 1
-        # Generous upper bound: theory predicts ~2-3 alarms; even 10x that
+        # Generous upper bound: theory predicts ~1 alarms; even 5x that
         # would indicate a real problem.
-        assert n_alarms <= 15, (
+        assert n_alarms <= 5, (
             f"{n_alarms}/{n_trials} trials false-alarmed on pure noise -- "
-            f"theory predicts ~2-3, this many suggests a real miscalibration."
+            f"theory predicts ~1, this many suggests a real miscalibration."
         )
 
     def test_detects_upward_shift(self, reference):
@@ -105,9 +105,9 @@ class TestPageHinkley:
             stream = rng.normal(0, 1, n_events)
             if _run_to_alarm(d, stream) is not None:
                 n_alarms += 1
-        assert n_alarms <= 15, (
+        assert n_alarms <= 5, (
             f"{n_alarms}/{n_trials} trials false-alarmed on pure noise -- "
-            f"theory predicts ~2-3. This many strongly suggests the "
+            f"theory predicts ~1. This many strongly suggests the "
             f"down-side running-max/min regression is back."
         )
 

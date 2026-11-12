@@ -67,6 +67,8 @@ class AdaptiveConformalThreshold:
         cls, burn_in_scores: np.ndarray, alpha_target: float = 0.01,
         gamma: float = 0.01, calibration_window: int = 2000,
         adapt_calibration_buffer: bool = True,
+        alpha_min: float = 1e-4, alpha_max: float = 0.5,
+        delayed_gamma: Optional[float] = None,
     ) -> "AdaptiveConformalThreshold":
         """
         :param adapt_calibration_buffer: if True (default), live Zero-Bias
@@ -84,6 +86,7 @@ class AdaptiveConformalThreshold:
         obj = cls(
             alpha_target=alpha_target, gamma=gamma, calibration_window=calibration_window,
             adapt_calibration_buffer=adapt_calibration_buffer,
+            alpha_min=alpha_min, alpha_max=alpha_max, delayed_gamma=delayed_gamma,
         )
         for s in np.asarray(burn_in_scores, dtype=np.float64):
             obj._calib_scores.append(float(s))

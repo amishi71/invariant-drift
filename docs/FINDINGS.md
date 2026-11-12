@@ -2,7 +2,7 @@
 
 Bugs and empirical findings caught by actually running `main.py` end-to-end
 and noticing numbers that didn't match theory — e.g. CUSUM's ARL0 for
-k=0.5, h=10 should be ~22,000, not ~20 — then tracing each one down.
+k=0.5, h=10 should be ~70,000 (two-sided; ~140,000 one-sided), not ~20 — then tracing each one down.
 
 ## Bugs
 
