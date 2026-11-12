@@ -542,7 +542,7 @@ def main():
     p.add_argument("--drops", type=float, nargs="+", default=[0.15, 0.4])
     p.add_argument("--taus", type=float, nargs="+", default=[400.0, 3000.0])
     p.add_argument("--h-min", type=float, default=1.0)
-    p.add_argument("--h-max", type=float, default=80.0)
+    p.add_argument("--h-max", type=float, default=400.0)
     p.add_argument("--h-step", type=float, default=0.25)
     p.add_argument("--include-adwin", action="store_true")
     p.add_argument("--adwin-deltas", type=float, nargs="+",
