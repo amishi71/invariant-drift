@@ -201,6 +201,14 @@ def run_seed(pool, seed, args, calib_pool=None):
     tune_s = reserve + tune_sl * T
     win = {name: (take_windows(F, s, T), take_windows(P, s, T), take_windows(J, s, T))
            for name, s in (("cal", cal_s), ("val", val_s), ("eval", eval_s))}
+    if args.strict_transfer:
+        if calib_pool is None:
+            raise SystemExit("--strict-transfer needs --calib-cache")
+        n_slots_c = (len(CF) - reserve_c) // T
+        if n_slots_c < args.n_cal:
+            raise SystemExit(f"calibration region has {n_slots_c} slots after burn-in, need {args.n_cal}")
+        cs = reserve_c + np.random.default_rng(3000 + seed).permutation(n_slots_c)[:args.n_cal] * T
+        win["cal"] = (take_windows(CF, cs, T), take_windows(CP, cs, T), take_windows(CJ, cs, T))
 
     scen = scenario_list(args)
     scen_names = [s[0] for s in scen]
@@ -514,6 +522,9 @@ def main():
                    help="CROSS-RUN: take the VAE/regression/reference from this cache (another run) and all "
                         "windows from --cache-path")
     p.add_argument("--calib-region", type=int, default=0)
+    p.add_argument("--strict-transfer", action="store_true",
+                   help="CROSS-RUN with no healthy data from the monitored run: cal windows (which set h) come "
+                        "from the CALIBRATION run after its burn-in blocks; val/eval/tune stay on the monitored run")
     p.add_argument("--calib-n-regions", type=int, default=4,
                    help="split of the calibration cache; only the start of region --calib-region is used")
     p.add_argument("--inject-set", choices=["auto"] + sorted(INJECTION_SETS), default="auto",
