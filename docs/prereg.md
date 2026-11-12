@@ -35,3 +35,14 @@ Deviations will be logged here with a reason.
 - Gate 3 (harm map, 20 VAE seeds): "invisible harm" = |bkg-rate change| <= 5% AND frozen efficiency loss >= 20% at
   the 1% operating rate. Claimed as a finding only if it occurs in >= 70% of seeds at some drop >= 25% (per signal).
   Otherwise reported as "k of 20 VAE realisations".
+
+## Gate results (2026-11-12)
+- Gate 1: FAILED for k <= 0.1 (FAR 11-78% at 5% target); met only at k >= 0.25 (raw) / k = 0.5 (residual).
+- Gate 2: PASSED (min best-statistic d' = 3.9 on the fine grid, seed 0). Zero crossings: residual ~9.5%, q90 ~20%.
+- Gate 3: pending (20-seed batch).
+
+## Gate refinements (2026-11-12)
+- Gate 1: passing settings are raw two-sided k=0.25 (FAR 8%/6%) and residual k=0.5 (6%/4%). At those settings power for 5-15% drops is
+  at or near the null FAR (15%: 14%/35% raw k=0.25); only >=25% drops are detected (100% at k=0.25). Residual offset (0.069) is ~2x raw log-score (0.035).
+- Gate 2 (seeds 0-2, default drops): best-statistic d' >= 4.0 at every tested drop, but the residual-mean shift at 10% ranges -0.000 to +0.063
+  across VAE seeds: blind-spot location is VAE-dependent. q90 ~20% crossing seen in seed 0 only.
