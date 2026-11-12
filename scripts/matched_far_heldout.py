@@ -48,6 +48,15 @@ Usage:
     python3 scripts/matched_far_heldout.py --include-adwin
     python3 scripts/matched_far_heldout.py --aggregate-only --seeds 0 1 2
 
+Forward-in-time protocol (calibrate on the past, monitor the future; needs a region that holds both):
+    python3 scripts/matched_far_heldout.py --source real --cache-path data/real_cache/zb396102_ordered.npz \\
+        --n-regions 2 --design pu_spline --time-split forward --n-tune 150 --tag l1_396102_forward \\
+        --inject-set l1_calo --requantize 0.5 --out-dir results/l1_forward
+Cross-run protocol (VAE, regression and reference from run A; every window from run B):
+    python3 scripts/matched_far_heldout.py --source real --cache-path data/real_cache/zb398183_ordered.npz \\
+        --calib-cache data/real_cache/zb396102_ordered.npz --n-regions 4 --design pu_spline --n-tune 150 \\
+        --tag l1_cross_396102_to_398183 --inject-set l1_calo --requantize 0.5 --out-dir results/l1_cross
+
 Choose k on separate tuning windows (adds a 'k selected on tuning' table):
     python3 scripts/matched_far_heldout.py --n-tune 200 --out-dir results/matched_far_heldout_tuned
 
@@ -74,16 +83,19 @@ from src.calibration_split import MODES, build_split_calibration, residualize, r
 from src.residual_models import DESIGNS
 from src.matched_far import (
     RealPool, SyntheticPool, adwin_first_alarm, bocpd_young_prob_paths, calibrate_param,
-    cusum_runmax, first_passage, inject_masked, inject_radiation, outcome_counts,
+    cusum_runmax, first_passage, outcome_counts,
     take_windows, wilson, zscore,
 )
 
+from src.injection_sets import (INJECTION_SETS, inject_masked_cols, inject_radiation_cols,
+                                resolve_injection_cols)
+
 CUSUM_VARIANTS = [
     ("CUSUM two-sided, residual", "resid", "two"),
-    ("CUSUM down-only, residual (oracle direction)", "resid", "down"),
-    ("CUSUM up-only, residual (high-score-gate analogue)", "resid", "up"),
+    ("CUSUM down-only, residual (fixed direction)", "resid", "down"),
+    ("CUSUM up-only, residual (fixed direction)", "resid", "up"),
     ("CUSUM two-sided, raw log-score (no regression)", "logscore", "two"),
-    ("CUSUM down-only, raw log-score (oracle direction)", "logscore", "down"),
+    ("CUSUM down-only, raw log-score (fixed direction)", "logscore", "down"),
 ]
 
 
@@ -121,11 +133,57 @@ def make_record(mode, family, k, target, params, fp, T, scen_names, extra=None, 
     return rec
 
 
-def run_seed(pool, seed, args):
+def place_windows(args, rng, n_slots):
+    """Slot indices (relative to the first monitorable slot) for cal / val / eval / tune windows, plus the
+    slots left free (source for mode "span").
+
+    time_split "none"   : the original placement, one random permutation of all slots (so cal/val/eval are
+                          IDENTICAL to earlier runs). Calibration, validation and evaluation windows are
+                          interleaved in time.
+    time_split "forward": slots before the boundary hold the calibration windows (they set h); validation
+                          (false-alarm check), evaluation and tuning windows come from slots AFTER it. That is
+                          the deployment order: set thresholds on the past, monitor the future."""
+    need = args.n_cal + args.n_val + args.n_eval
+    if args.time_split == "none":
+        perm = rng.permutation(n_slots)
+        cal = perm[:args.n_cal]
+        val = perm[args.n_cal:args.n_cal + args.n_val]
+        ev = perm[args.n_cal + args.n_val:need]
+        tune = perm[need:need + args.n_tune]
+        free = perm[need + args.n_tune:]
+        return cal, val, ev, tune, free
+    boundary = int(args.forward_boundary * n_slots)
+    late_need = args.n_val + args.n_eval + args.n_tune
+    if boundary < args.n_cal or n_slots - boundary < late_need:
+        raise SystemExit(
+            f"--time-split forward with boundary {args.forward_boundary:g} leaves {boundary} early slots "
+            f"(need {args.n_cal} calibration windows) and {n_slots - boundary} late slots (need {late_need} "
+            f"validation+evaluation+tuning windows). Use fewer windows, a larger region (smaller --n-regions) "
+            f"or a different --forward-boundary.")
+    early = rng.permutation(boundary)
+    late = boundary + rng.permutation(n_slots - boundary)
+    cal = early[:args.n_cal]
+    val = late[:args.n_val]
+    ev = late[args.n_val:args.n_val + args.n_eval]
+    tune = late[args.n_val + args.n_eval:late_need]
+    free = np.concatenate([early[args.n_cal:], late[late_need:]])
+    return cal, val, ev, tune, free
+
+
+def run_seed(pool, seed, args, calib_pool=None):
     t0 = time.time()
     T = args.window
     F, P, J = pool.region(seed % args.n_regions, args.n_regions)
-    reserve = reserved_events(args.n_vae, args.n_reg, args.n_ref)
+    inj_cols = resolve_injection_cols(args.inject_set, None if pool.name == "synthetic" else args.cache_path)
+    if calib_pool is not None:
+        # Cross-run: VAE, regression and reference come from ANOTHER run; every window comes from this one.
+        CF, CP, CJ = calib_pool.region(args.calib_region, args.calib_n_regions)
+        reserve = 0                      # nothing in this region is spent on calibration blocks
+        reserve_c = reserved_events(args.n_vae, args.n_reg, args.n_ref)
+    else:
+        CF, CP, CJ = F, P, J
+        reserve = reserved_events(args.n_vae, args.n_reg, args.n_ref)
+        reserve_c = reserve
     n_slots = (len(F) - reserve) // T
     need = args.n_cal + args.n_val + args.n_eval
     if n_slots < need + args.n_tune:
@@ -133,14 +191,9 @@ def run_seed(pool, seed, args):
             f"Region has {n_slots} usable {T}-event slots but {need} are needed "
             f"(n_cal+n_val+n_eval+n_tune). Reduce those, reduce --n-regions, or use a larger pool.")
     rng = np.random.default_rng(1000 + seed)
-    perm = rng.permutation(n_slots)           # same draw as before: windows are unchanged
-    starts = reserve + perm[:need] * T
-    # Tuning windows (--n-tune) take the next slots of the SAME permutation, so cal/val/eval
-    # windows are identical to runs without tuning; they never overlap any other window.
-    tune_s = reserve + perm[need:need + args.n_tune] * T
-    free_slots = perm[need + args.n_tune:]    # slots in NO window: source for mode "span"
-    cal_s, val_s, eval_s = (starts[:args.n_cal], starts[args.n_cal:args.n_cal + args.n_val],
-                            starts[args.n_cal + args.n_val:])
+    cal_sl, val_sl, eval_sl, tune_sl, free_slots = place_windows(args, rng, n_slots)
+    cal_s, val_s, eval_s = (reserve + cal_sl * T, reserve + val_sl * T, reserve + eval_sl * T)
+    tune_s = reserve + tune_sl * T
     win = {name: (take_windows(F, s, T), take_windows(P, s, T), take_windows(J, s, T))
            for name, s in (("cal", cal_s), ("val", val_s), ("eval", eval_s))}
 
@@ -155,10 +208,13 @@ def run_seed(pool, seed, args):
     span_idx = None
     if "span" in args.modes:
         n_span = args.n_reg + args.n_ref
-        if len(free_slots) * T < n_span:
-            raise SystemExit(f"mode 'span' needs {n_span} events from slots outside every window, "
-                             f"but only {len(free_slots) * T} exist. Reduce --n-cal/--n-val/--n-eval.")
-        pool_idx = (reserve + free_slots[:, None] * T + np.arange(T)[None, :]).ravel()
+        if calib_pool is not None:
+            pool_idx = np.arange(reserve_c, len(CF))      # any event of the calibration run past its blocks
+        else:
+            if len(free_slots) * T < n_span:
+                raise SystemExit(f"mode 'span' needs {n_span} events from slots outside every window, "
+                                 f"but only {len(free_slots) * T} exist. Reduce --n-cal/--n-val/--n-eval.")
+            pool_idx = (reserve + free_slots[:, None] * T + np.arange(T)[None, :]).ravel()
         pick = np.random.default_rng(2000 + seed).choice(len(pool_idx), n_span, replace=False)
         span_idx = (pool_idx[pick[:args.n_reg]], pool_idx[pick[args.n_reg:]])
 
@@ -166,19 +222,21 @@ def run_seed(pool, seed, args):
         print(f"  [seed {seed} | {mode} | design {args.design}] training VAE and building "
               f"calibration...", flush=True)
         sc = build_split_calibration(
-            F, P, J, mode=mode, n_vae=args.n_vae, n_reg=args.n_reg, n_ref=args.n_ref,
+            CF, CP, CJ, mode=mode, n_vae=args.n_vae, n_reg=args.n_reg, n_ref=args.n_ref,
             seed=seed, vae_epochs=args.vae_epochs, verbose=False,
             design=args.design, n_knots=args.n_knots,
             span_idx=span_idx if mode == "span" else None)
         series = {"cal": score_windows(sc, *win["cal"]), "val": score_windows(sc, *win["val"])}
         ef, ep, ej = win["eval"]
         for name, kind, val in scen:
-            inj = inject_masked(ef, val) if kind == "masked" else inject_radiation(ef, val)
+            inj = (inject_masked_cols(ef, val, inj_cols, args.requantize) if kind == "masked"
+                   else inject_radiation_cols(ef, val, inj_cols, requantize=args.requantize))
             series[name] = score_windows(sc, inj, ep, ej)
         if args.n_tune > 0:
             tf, tp, tj = win["tune"]
             for name, kind, val in scen:
-                inj = inject_masked(tf, val) if kind == "masked" else inject_radiation(tf, val)
+                inj = (inject_masked_cols(tf, val, inj_cols, args.requantize) if kind == "masked"
+                       else inject_radiation_cols(tf, val, inj_cols, requantize=args.requantize))
                 series["tune:" + name] = score_windows(sc, inj, tp, tj)
         ref = {"resid": sc.ref_residuals, "logscore": sc.ref_logscores}
         ref_sd = float(sc.ref_residuals.std())
@@ -189,9 +247,18 @@ def run_seed(pool, seed, args):
             "val_z_mean": float((v.mean() - sc.ref_residuals.mean()) / ref_sd),
             "val_z_std": float(v.std() / ref_sd),
             "vae_final_loss": sc.info.get("vae_final_loss"), "design": args.design}
+        # Which way does each injection move the residual? Measured on the tuning windows when they exist
+        # (diagnostic only; it never feeds back into any detector).
+        pre = "tune:" if args.n_tune > 0 else ""
+        mode_info[mode]["inject_shift_z"] = {
+            name: float((series[pre + name]["resid"].mean() - sc.ref_residuals.mean()) / ref_sd)
+            for name, _kind, _val in scen}
+        mode_info[mode]["inject_shift_source"] = "tune" if args.n_tune > 0 else "eval"
         mi = mode_info[mode]
         print(f"      held-out validation residual vs reference: z-mean {mi['val_z_mean']:+.3f}, "
               f"z-std {mi['val_z_std']:.3f}", flush=True)
+        print("      injection shift (z, + = residual rises): "
+              + ", ".join(f"{n} {v:+.2f}" for n, v in mi["inject_shift_z"].items()), flush=True)
 
         # --- CUSUM family -----------------------------------------------------
         for family, ser, md in CUSUM_VARIANTS:
@@ -226,6 +293,10 @@ def run_seed(pool, seed, args):
     return {"seed": seed, "region": seed % args.n_regions, "source": pool.name,
             "n_windows": {"cal": args.n_cal, "val": args.n_val, "eval": args.n_eval, "tune": args.n_tune},
             "scenarios": scen_names, "mode_info": mode_info, "records": records,
+            "protocol": {"time_split": args.time_split, "forward_boundary": args.forward_boundary,
+                         "calibration_from": args.calib_cache or "same region",
+                         "inject_set": args.inject_set, "inject_cols": list(inj_cols),
+                         "requantize": args.requantize},
             "config": vars(args)}
 
 
@@ -321,7 +392,32 @@ def print_report(agg, modeinfo, scen_names, args):
                 row += f"{fmt_rate(b['detect'], b['n']) + ' / ' + med:>26}"
             print(row)
     print("\nRead detection against the achieved FAR above, not the target alone. A detector whose "
-          "detection interval overlaps its own false-alarm rate (the null) has not been shown to detect.")
+          "detection interval overlaps its own false-alarm rate (the null) has not been shown to detect. "
+          "The bracketed Wilson intervals treat windows as independent; window means are correlated and "
+          "regions of one run are not independent seeds, so they are optimistic (see the seed ranges in the "
+          "selected-k table).")
+
+
+def print_direction_check(modeinfo):
+    """Which way each injection moves the calibration residual (mean over seeds, z units). The 'up-only' and
+    'down-only' detectors have a FIXED direction; this table says which one points the right way for this
+    dataset and injection. The sign is not a property of the detector: it was negative for the JetHT masked
+    drop and is positive for the L1 one."""
+    rows = [(mode, lst) for mode, lst in modeinfo.items() if lst and "inject_shift_z" in lst[0]]
+    if not rows:
+        return
+    print("\n" + "=" * 100)
+    print("DIRECTION CHECK: mean shift of the residual under each injection (z units, mean over seeds)")
+    names = list(rows[0][1][0]["inject_shift_z"])
+    print(f"{'mode':<10}" + "".join(f"{n:>36}" for n in names))
+    for mode, lst in rows:
+        cells = []
+        for n in names:
+            v = float(np.mean([m["inject_shift_z"][n] for m in lst]))
+            cells.append(f"{v:+.2f} ({'up-only' if v > 0 else 'down-only'} is right)")
+        print(f"{mode:<10}" + "".join(f"{c:>36}" for c in cells))
+    print("A fixed-direction detector pointing the other way is expected to detect nothing; compare "
+          "one-sided rows against this table, and treat the two-sided detector as the deployable headline.")
 
 
 def print_selected_k(agg, modeinfo, scen_names, args):
@@ -333,7 +429,8 @@ def print_selected_k(agg, modeinfo, scen_names, args):
     print(f"k SELECTED ON SEPARATE TUNING WINDOWS, REPORTED ON EVALUATION WINDOWS "
           f"(target FAR {pt:g}, window {args.window}, {args.n_tune} tuning windows per seed)")
     print(f"{'detector':<52}{'mode':<10}{'k(tune)':>8}{'tune mean':>10}"
-          + "".join(f"{s:>22}" for s in scen_names) + f"{'eval mean':>10}{'best-k eval mean':>18}")
+          + "".join(f"{s:>22}" for s in scen_names)
+          + f"{'eval mean':>10}{'eval min':>9}{'seed range of mean':>20}{'best-k eval mean':>18}")
     fams = sorted({(k[1]) for k in agg if k[1].startswith("CUSUM")})
     for fam in fams:
         for mode in modeinfo:
@@ -352,9 +449,20 @@ def print_selected_k(agg, modeinfo, scen_names, args):
             tm, _, k_sel, em, a = max(cands, key=lambda c: (c[0], c[1]))
             cells = "".join(f"{fmt_rate(a['scen'][s]['detect'], a['scen'][s]['n']):>22}" for s in scen_names)
             best_eval = max(c[3] for c in cands)
-            print(f"{fam:<52}{mode:<10}{k_sel:>8g}{100*tm:>9.0f}%{cells}{100*em:>9.0f}%{100*best_eval:>17.0f}%")
-    print("\nThe 'eval mean' column is the honest headline. If 'best-k eval mean' is much higher, the "
-          "per-k table above would have overstated power by picking k on the evaluation windows.")
+            worst = min(a["scen"][s]["detect"] / a["scen"][s]["n"] for s in scen_names)
+            ps = [a["scen"][s]["per_seed"] for s in scen_names]
+            if all(len(x) == len(ps[0]) for x in ps) and len(ps[0]) > 1:
+                per_seed_mean = np.mean(np.array(ps), axis=0)
+                rng_txt = f"{100*per_seed_mean.min():.0f}-{100*per_seed_mean.max():.0f}% ({len(ps[0])} seeds)"
+            else:
+                rng_txt = "n/a"
+            print(f"{fam:<52}{mode:<10}{k_sel:>8g}{100*tm:>9.0f}%{cells}{100*em:>9.0f}%{100*worst:>8.0f}%"
+                  f"{rng_txt:>20}{100*best_eval:>17.0f}%")
+    print("\n'eval mean' averages over scenarios and is inflated when several scenarios saturate near 100%; "
+          "'eval min' is the worst scenario and 'seed range' is the spread of the per-seed means (the more "
+          "honest uncertainty: the bracketed Wilson intervals treat windows as independent, but window "
+          "means are correlated, so they are optimistic). If 'best-k eval mean' is much higher than "
+          "'eval mean', the per-k table would have overstated power by picking k on the evaluation windows.")
 
 
 def main():
@@ -379,6 +487,25 @@ def main():
     p.add_argument("--n-tune", type=int, default=0,
                    help="drift-injected tuning windows per seed, used only to choose k (0 = off). "
                         "Taken from slots no other window uses; cal/val/eval are unchanged.")
+    p.add_argument("--time-split", choices=["none", "forward"], default="none",
+                   help="none = windows interleaved in time (original); forward = calibration windows come "
+                        "from slots BEFORE --forward-boundary, validation/evaluation/tuning windows after it")
+    p.add_argument("--forward-boundary", type=float, default=0.5,
+                   help="fraction of the region (in time) before which calibration windows are drawn")
+    p.add_argument("--calib-cache", default=None,
+                   help="CROSS-RUN: take the VAE/regression/reference from this cache (another run) and all "
+                        "windows from --cache-path")
+    p.add_argument("--calib-region", type=int, default=0)
+    p.add_argument("--calib-n-regions", type=int, default=4,
+                   help="split of the calibration cache; only the start of region --calib-region is used")
+    p.add_argument("--inject-set", choices=["auto"] + sorted(INJECTION_SETS), default="auto",
+                   help="columns the injections scale (src/injection_sets.py). auto = jetht for JetHT caches, "
+                        "l1_legacy (4, 8, 9) for L1 caches; l1_calo scales every calorimeter energy together")
+    p.add_argument("--requantize", type=float, default=0.0,
+                   help="round injected columns back onto this lattice (0.5 for the L1 caches; 0 = off)")
+    p.add_argument("--tag", default=None,
+                   help="prefix of the per-seed result files (default: the --source value). Use a distinct tag "
+                        "per dataset, e.g. l1_396102, so results are never mixed up")
     p.add_argument("--vae-epochs", type=int, default=40)
     p.add_argument("--k-values", type=float, nargs="+", default=[0.1, 0.25, 0.5])
     p.add_argument("--targets", type=float, nargs="+", default=[0.02, 0.05, 0.10])
@@ -403,9 +530,12 @@ def main():
               f"will reuse the same data region (not independent). Raise --n-regions.")
 
     os.makedirs(args.out_dir, exist_ok=True)
-    tag = args.source
+    tag = args.tag or args.source
+    if args.calib_cache and args.source != "real":
+        raise SystemExit("--calib-cache needs --source real (the cache of the monitored run)")
     if not args.aggregate_only:
-        pool = RealPool(args.cache_path) if tag == "real" else SyntheticPool(args.synthetic_region_events)
+        pool = RealPool(args.cache_path) if args.source == "real" else SyntheticPool(args.synthetic_region_events)
+        calib_pool = RealPool(args.calib_cache) if args.calib_cache else None
         print(f"Pool: {pool.name}. Seeds {args.seeds}; window {args.window}; "
               f"cal/val/eval windows {args.n_cal}/{args.n_val}/{args.n_eval}; modes {args.modes}")
         for seed in args.seeds:
@@ -414,7 +544,7 @@ def main():
                 print(f"seed {seed}: {path} exists, skipping")
                 continue
             print(f"seed {seed}:", flush=True)
-            res = run_seed(pool, seed, args)
+            res = run_seed(pool, seed, args, calib_pool)
             with open(path, "w") as f:
                 json.dump(res, f, default=str)
             print(f"  wrote {path}")
@@ -426,6 +556,7 @@ def main():
     agg, modeinfo, scen_names = aggregate(files)
     print(f"\nAggregating {len(files)} seed file(s) from {args.out_dir}")
     print_report(agg, modeinfo, scen_names, args)
+    print_direction_check(modeinfo)
     if any(a["tune"] for a in agg.values()):
         print_selected_k(agg, modeinfo, scen_names, args)
 
