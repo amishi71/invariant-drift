@@ -52,3 +52,9 @@ Deviations will be logged here with a reason.
 - Matched FAR: CUSUM (k=0.5 SD) threshold set so healthy P(alarm within 100 LS) = 5%. Detection = P(alarm within 20 LS).
 - A policy "recovers" if detection of a 15% drop >= 80% at matched FAR (some statistic). Absorption (fault present during warm-up) is
   reported for every policy. Model limits: iid bootstrap of healthy LS, additive-shift faults, sigma from the monitored run.
+
+## LS re-baselining results (2026-11-12, seed 0, shift-only iid model)
+- Strict fixed reference false-alarms: resid mean FAR 100%, logscore 100%, q90 98.9%, q99 1.1% (5% budget per 100 LS).
+- Fixed q99 detects 5-25% drops at 100%, blind at 40% (3-14%). Re-baselined q90 (n=30) detects 5-40% at 100% (fill-length budget).
+- n<=5 LS baselines are unusable at fill-length budget; fault present during warm-up is absorbed (~0%) for all re-baselined monitors.
+- Pre-registered "recovers" criterion (15% drop >=80%) met by re-baselined resid/q90 (n>=5) and by fixed q99; the criterion does not discriminate between policies.
