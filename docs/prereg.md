@@ -26,3 +26,12 @@ Deviations will be logged here with a reason.
 - The raw and residual detection numbers for the 15% and 40% drops (cross B->A) were known before this file was committed.
 - The harm criterion is applied as written; its "bandwidth" flag also counts a background-rate DECREASE, which is
   not a bandwidth problem. Frozen and recalibrated signal efficiencies are reported separately.
+
+## Robustness gates (logged 2026-11-12, BEFORE running them)
+- Gate 1 (strict transfer, results/strict): "fixed reference transfers" is accepted only if achieved held-out FAR
+  is <= 2x target (<= 10% at the 5% target) in BOTH directions. Otherwise it is reported as falsified.
+- Gate 2 (fine signed LS grid, results/ls_fine): for every drop 5-40%, at least one statistic has |shift|/LS-SD >= 3.
+  Any grid drop where a statistic is < 3 is reported as that statistic's blind spot (signed shifts read, not d').
+- Gate 3 (harm map, 20 VAE seeds): "invisible harm" = |bkg-rate change| <= 5% AND frozen efficiency loss >= 20% at
+  the 1% operating rate. Claimed as a finding only if it occurs in >= 70% of seeds at some drop >= 25% (per signal).
+  Otherwise reported as "k of 20 VAE realisations".
